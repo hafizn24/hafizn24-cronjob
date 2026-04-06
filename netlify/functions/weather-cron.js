@@ -2,10 +2,10 @@ const { schedule } = require('@netlify/functions');
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
-const WEATHER_API_BASE_URL = process.env.WEATHER_API_BASE_URL || 'https://api.weatherapi.com/v1';
+const WEATHER_API_BASE_URL = process.env.WEATHER_API_BASE_URL;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_API_BASE_URL = process.env.TELEGRAM_API_BASE_URL || 'https://api.telegram.org';
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '@larkweathertest';
+const TELEGRAM_API_BASE_URL = process.env.TELEGRAM_API_BASE_URL;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const DEBUG = process.env.WEATHER_DEBUG_MODE === 'true';
 
 const RAIN_CODES = new Set([
@@ -265,9 +265,9 @@ const handler = async (event, context) => {
 
   try {
     // Get configuration from environment or use defaults
-    const latitude = process.env.LOCATION_LATITUDE || 1.206;
-    const longitude = process.env.LOCATION_LONGITUDE || 103.729;
-    const locationName = process.env.LOCATION_NAME || 'Kampong Sudong';
+    const latitude = process.env.LOCATION_LATITUDE;
+    const longitude = process.env.LOCATION_LONGITUDE;
+    const locationName = process.env.LOCATION_NAME;
 
     // Fetch weather data
     console.log(
