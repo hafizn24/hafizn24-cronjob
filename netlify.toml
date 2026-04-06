@@ -4,7 +4,6 @@
 [build]
   command = "npm run build"
   functions = "netlify/functions"
-  publish = "public"
 
 # Function configuration
 [functions."weather-cron"]
