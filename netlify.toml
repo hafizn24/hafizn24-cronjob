@@ -1,0 +1,43 @@
+# Netlify Configuration for Weather Cron Job
+
+# Build settings
+[build]
+  command = "npm run build"
+  functions = "netlify/functions"
+  publish = "public"
+
+# Function configuration
+[functions."weather-cron"]
+  schedule = "@hourly"
+  description = "Scheduled weather monitoring and alert system"
+
+# Environment variables (set these in Netlify UI or deploy with netlify.toml)
+[env]
+  [env.production]
+    # Weather API Configuration
+    WEATHER_API_KEY = ""
+    WEATHER_API_BASE_URL = "https://api.weatherapi.com/v1"
+    
+    # Location Configuration
+    LOCATION_LATITUDE = "1.206"
+    LOCATION_LONGITUDE = "103.729"
+    LOCATION_NAME = "Kampong Sudong, Singapore"
+    
+    # Telegram Integration
+    TELEGRAM_BOT_TOKEN = ""
+    TELEGRAM_CHAT_ID = "@larkweathertest"
+    TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+    
+    # Debug Mode
+    WEATHER_DEBUG_MODE = "false"
+
+  [env.development]
+    WEATHER_API_KEY = ""
+    WEATHER_API_BASE_URL = "https://api.weatherapi.com/v1"
+    LOCATION_LATITUDE = "1.206"
+    LOCATION_LONGITUDE = "103.729"
+    LOCATION_NAME = "Kampong Sudong, Singapore"
+    TELEGRAM_BOT_TOKEN = ""
+    TELEGRAM_CHAT_ID = "@larkweathertest"
+    TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+    WEATHER_DEBUG_MODE = "true"

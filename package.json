@@ -1,0 +1,27 @@
+{
+  "name": "hafizn24-cronjob",
+  "version": "1.0.0",
+  "description": "Weather Report Scheduling Endpoint - Automated weather monitoring and alert system",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'Build complete'",
+    "dev": "netlify functions:invoke weather-cron",
+    "test": "node test/test-weather-logic.js"
+  },
+  "keywords": [
+    "weather",
+    "cron",
+    "netlify",
+    "scheduled-functions",
+    "telegram",
+    "alerts"
+  ],
+  "author": "Hafiz N24",
+  "license": "MIT",
+  "dependencies": {
+    "@netlify/functions": "^2.0.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  }
+}
