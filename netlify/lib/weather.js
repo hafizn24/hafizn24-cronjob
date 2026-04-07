@@ -210,20 +210,34 @@ ${debugLines}
   return { shouldAlert: true, message };
 }
 
-// ── Fetch Weather Data ───────────────────────────────────────────────────
+// ── Fetch Weather Data ───────────────────────────────────────────────
 async function fetchWeatherData(latitude, longitude) {
   try {
+    // Validate inputs
+    if (!latitude || !longitude) {
+      throw new Error(`Invalid coordinates: latitude=${latitude}, longitude=${longitude}`);
+    }
+
+    if (!WEATHER_API_KEY || !WEATHER_API_BASE_URL) {
+      throw new Error('Missing Weather API credentials in environment variables');
+    }
+
     const url = `${WEATHER_API_BASE_URL}/forecast.json?key=${WEATHER_API_KEY}&q=${latitude},${longitude}&aqi=no&alerts=no`;
+    
+    console.log(`🌐 Weather API Request: ${WEATHER_API_BASE_URL}/forecast.json?key=***&q=${latitude},${longitude}&aqi=no&alerts=no`);
+
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`Weather API Error Response: ${errorText}`);
+      throw new Error(`Weather API error: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
     const data = await response.json();
     return data;
   } catch (error) {
-    console.error('Error fetching weather data:', error.message);
+    console.error('❌ Error fetching weather data:', error.message);
     throw error;
   }
 }
@@ -264,6 +278,14 @@ async function runWeatherCheck() {
     const latitude = process.env.LOCATION_LATITUDE;
     const longitude = process.env.LOCATION_LONGITUDE;
     const locationName = process.env.LOCATION_NAME;
+
+    // Log environment configuration for debugging
+    console.log('📋 Environment Configuration:');
+    console.log(`  • Location Name: ${locationName || '❌ NOT SET'}`);
+    console.log(`  • Latitude: ${latitude || '❌ NOT SET'}`);
+    console.log(`  • Longitude: ${longitude || '❌ NOT SET'}`);
+    console.log(`  • API Base URL: ${WEATHER_API_BASE_URL || '❌ NOT SET'}`);
+    console.log(`  • API Key: ${WEATHER_API_KEY ? '✅ SET' : '❌ NOT SET'}`);
 
     // Fetch weather data
     console.log(
