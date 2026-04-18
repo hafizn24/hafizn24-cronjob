@@ -19,7 +19,6 @@
   "author": "Hafiz N24",
   "license": "MIT",
   "dependencies": {
-    "@netlify/blobs": "^10.7.4",
     "@netlify/functions": "^2.0.0"
   },
   "devDependencies": {
