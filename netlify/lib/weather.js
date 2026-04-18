@@ -1,331 +1,180 @@
+// ── Imports ───────────────────────────────────────────────────────────────
+const { getStore } = require('@netlify/blobs');
+
 // ── Constants ─────────────────────────────────────────────────────────────
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const WEATHER_API_BASE_URL = process.env.WEATHER_API_BASE_URL;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API_BASE_URL = process.env.TELEGRAM_API_BASE_URL;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const DEBUG = process.env.WEATHER_DEBUG_MODE === 'true';
+
+const BLOB_STORE_NAME = 'weather-state';
+const BLOB_KEY = 'alert-state';
 
 const RAIN_CODES = new Set([
-  1063, 1072, 1087, 1150, 1153, 1168, 1171, 1180, 1183, 1186, 1189, 1192, 1195, 1198,
-  1201, 1240, 1243, 1246, 1273, 1276,
+  1087,                               // Thundery outbreaks nearby
+  1150, 1153,                         // Drizzle
+  1180, 1183, 1186, 1189, 1192, 1195, // Rain light to heavy
+  1198, 1201,                         // Freezing rain
+  1240, 1243, 1246,                   // Rain showers
+  1273, 1276,                         // Rain with thunder
 ]);
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-function isRainy(conditionCode) {
-  return RAIN_CODES.has(conditionCode);
+// ── Blob State Helpers ────────────────────────────────────────────────────
+async function getLastState() {
+  try {
+    const store = getStore(BLOB_STORE_NAME);
+    const value = await store.get(BLOB_KEY);
+    return value ?? null; // 'rain' | 'clear' | null
+  } catch (err) {
+    console.error('Blob read error:', err.message);
+    return null;
+  }
 }
 
-function getHourSlot(hours, location, offsetHours) {
-  const now = new Date(location.localtime.replace(' ', 'T'));
-  const targetHour = (now.getHours() + offsetHours) % 24;
+async function saveState(state) {
+  try {
+    const store = getStore(BLOB_STORE_NAME);
+    await store.set(BLOB_KEY, state);
+    console.log('State saved:', state);
+  } catch (err) {
+    console.error('Blob write error:', err.message);
+  }
+}
+
+// ── Date Formatter ────────────────────────────────────────────────────────
+function formatLocalTime(localtime) {
+  // API returns localtime as "2026-04-11 08:24"
+  const [datePart, timePart] = localtime.split(' ');
+  const [year, month, day] = datePart.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthName = months[parseInt(month, 10) - 1];
+  return { date: `${day}-${monthName}-${year}`, time: timePart };
+}
+
+// ── Message Builders ──────────────────────────────────────────────────────
+function buildDetectedMessage(localtime) {
+  const { date, time } = formatLocalTime(localtime);
   return (
-    hours.find((h) => new Date(h.time.replace(' ', 'T')).getHours() === targetHour) ||
-    null
+    `⚡⚡⚡ LIGHTNING ALERT DETECTED ⚡⚡⚡\n\n` +
+    `Lightning has been detected within our vicinity.\n\n` +
+    `All open field & exposed work activities are to CEASE IMMEDIATELY and proceed to the nearest lightning shelter.\n\n` +
+    `📅 Date: ${date}\n` +
+    `🕐 Time: ${time}`
   );
 }
 
-function formatSlotDetail(slot, label) {
-  return `  ${label}
-  ──────────────────
-  • Condition    : ${slot.condition.text}
-  • Temperature  : ${slot.temp_c}°C / Feels ${slot.feelslike_c}°C
-  • Humidity     : ${slot.humidity}%
-  • Rainfall     : ${slot.precip_mm} mm
-  • Wind         : ${slot.wind_kph} km/h ${slot.wind_dir}
-  • Visibility   : ${slot.vis_km} km
-  • Pressure     : ${slot.pressure_mb} mb
-  • Cloud Cover  : ${slot.cloud}%`;
-}
-
-// ── Weather Decision Engine ───────────────────────────────────────────────
-function evaluateWeatherConditions(data) {
-  const location = data.location;
-  const current = data.current;
-  const hours = data.forecast.forecastday[0].hour;
-
-  // ── Evaluate states ─────────────────────────────────────────────────────
-  const now = new Date(location.localtime.replace(' ', 'T'));
-  const next1h = getHourSlot(hours, location, 1);
-  const next2h = getHourSlot(hours, location, 2);
-
-  const currentRaining = isRainy(current.condition.code);
-  const next1hRaining = next1h ? isRainy(next1h.condition.code) : false;
-  const next2hRaining = next2h ? isRainy(next2h.condition.code) : false;
-
-  // ── Debug block ─────────────────────────────────────────────────────────
-  const debugLines = DEBUG
-    ? `
-╔══ 🛠 DEBUG ══╗
-
-  Timestamp    : ${location.localtime}
-  Evaluated at : Now=${now.getHours()}:00 | +1hr=${(now.getHours() + 1) % 24}:00 | +2hr=${
-        (now.getHours() + 2) % 24
-      }:00
-
-  Now
-  ──────────────────
-  • Code        : ${current.condition.code} (${current.condition.text})
-  • Precip      : ${current.precip_mm} mm
-  • Rain code?  : ${RAIN_CODES.has(current.condition.code)}
-  • isRainy     : ${currentRaining}
-
-  +1 Hour (${next1h ? next1h.time.slice(11, 16) : 'N/A'})
-  ──────────────────
-  • Code        : ${next1h ? next1h.condition.code : 'N/A'} (${
-        next1h ? next1h.condition.text : 'N/A'
-      })
-  • Precip      : ${next1h ? next1h.precip_mm + ' mm' : 'N/A'}
-  • Rain code?  : ${next1h ? RAIN_CODES.has(next1h.condition.code) : 'N/A'}
-  • isRainy     : ${next1hRaining}
-
-  +2 Hours (${next2h ? next2h.time.slice(11, 16) : 'N/A'})
-  ──────────────────
-  • Code        : ${next2h ? next2h.condition.code : 'N/A'} (${
-        next2h ? next2h.condition.text : 'N/A'
-      })
-  • Precip      : ${next2h ? next2h.precip_mm + ' mm' : 'N/A'}
-  • Rain code?  : ${next2h ? RAIN_CODES.has(next2h.condition.code) : 'N/A'}
-  • isRainy     : ${next2hRaining}
-
-  Decision Table
-  ──────────────────
-  Now=${currentRaining ? '🌧 rain' : '☀️ clear'} | +1hr=${
-        next1hRaining ? '🌧 rain' : '☀️ clear'
-      } | +2hr=${next2hRaining ? '🌧 rain' : '☀️ clear'}
-
-  → Rule matched : ${
-    !currentRaining && !next1hRaining && !next2hRaining
-      ? 'Rule 1 — All clear → return false'
-      : currentRaining && !next1hRaining && !next2hRaining
-      ? 'Rule 2 — Raining now, clears ahead → active alert'
-      : 'Rule 3 — Rain in forecast window → forecast alert'
-  }
-
-╚══ END DEBUG ══╝
-`
-    : '';
-
-  // ── Rule 1: all clear → silent ──────────────────────────────────────────
-  if (!currentRaining && !next1hRaining && !next2hRaining) {
-    if (DEBUG) return { shouldAlert: false, message: debugLines.trim() };
-    return { shouldAlert: false, message: null };
-  }
-
-  // ── Shared header ────────────────────────────────────────────────────────
-  const windWarn =
-    current.wind_kph >= 40
-      ? `\n  ⚠️  STRONG WIND: ${current.wind_kph} km/h ${current.wind_dir}`
-      : '';
-
-  const header = `╔══ 🌊 CDPS LIGHTNING ALERT ══╗
-
-  📌 ${location.name}, ${location.country}
-  🗓️ ${location.localtime}
-
-  Current Conditions
-  ──────────────────
-  • Condition    : ${current.condition.text}
-  • Temperature  : ${current.temp_c}°C / Feels ${current.feelslike_c}°C
-  • Humidity     : ${current.humidity}%
-  • Rainfall     : ${current.precip_mm} mm
-  • Wind         : ${current.wind_kph} km/h ${current.wind_dir}${windWarn}
-  • Visibility   : ${current.vis_km} km
-  • Pressure     : ${current.pressure_mb} mb
-  • Cloud Cover  : ${current.cloud}%`;
-
-  // ── Summary rows ─────────────────────────────────────────────────────────
-  const summaryRows = [];
-  summaryRows.push(
-    `  • Now      → ${current.precip_mm}mm  ${current.condition.text} (${
-      current.chance_of_rain ?? '—'
-    }%)`
+function buildClearedMessage(localtime) {
+  const { date, time } = formatLocalTime(localtime);
+  return (
+    `☀️☀️☀️ LIGHTNING ALERT CLEARED ☀️☀️☀️\n\n` +
+    `Lightning alert has been cleared.\n\n` +
+    `All personnel involved in open field & exposed work activities may now RESUME work.\n\n` +
+    `📅 Date: ${date}\n` +
+    `🕐 Time: ${time}`
   );
-  if (next1h)
-    summaryRows.push(
-      `  • +1 Hour  → ${next1h.precip_mm}mm  ${next1h.condition.text} (${next1h.chance_of_rain}%)`
-    );
-  if (next2h)
-    summaryRows.push(
-      `  • +2 Hours → ${next2h.precip_mm}mm  ${next2h.condition.text} (${next2h.chance_of_rain}%)`
-    );
-
-  // ── Rule 2: raining now, clears ahead ────────────────────────────────────
-  if (currentRaining && !next1hRaining && !next2hRaining) {
-    const message = `${header}
-
-  🚨 RAIN ALERT — ACTIVE NOW
-  ──────────────────
-  • Status       : RAINING NOW
-  • Clearing     : Expected within 1–2 hours
-
-  Hour-by-Hour Summary
-  ──────────────────
-${summaryRows.join('\n')}
-
-  Advisory
-  ──────────────────
-  • All outdoor site and marine works activities are to cease immediately, Please make your way to the nearest lightning shelter thank you
-${debugLines}
-╚══ Updated: ${current.last_updated} ══╝`;
-
-    return { shouldAlert: true, message };
-  }
-
-  // ── Rule 3: rain in forecast window ──────────────────────────────────────
-  let etaLabel = '';
-  if (!currentRaining && next1hRaining) etaLabel = '~1 hour';
-  else if (!currentRaining && !next1hRaining && next2hRaining) etaLabel = '~2 hours';
-
-  const alertType = currentRaining
-    ? '🚨 RAIN ALERT — ACTIVE + FORECAST'
-    : `⚠️  INCOMING RAIN — ETA ${etaLabel}`;
-
-  const slotDetails = [];
-  if (next1h && next1hRaining)
-    slotDetails.push(
-      formatSlotDetail(next1h, `📍 Forecast +1 Hour (${next1h.time.slice(11, 16)})`)
-    );
-  if (next2h && next2hRaining)
-    slotDetails.push(
-      formatSlotDetail(next2h, `📍 Forecast +2 Hours (${next2h.time.slice(11, 16)})`)
-    );
-
-  const message = `${header}
-
-  ${alertType}
-
-  Hour-by-Hour Summary
-  ──────────────────
-${summaryRows.join('\n')}
-${slotDetails.length > 0 ? '\n' + slotDetails.join('\n\n') : ''}
-
-  Advisory
-  ──────────────────
-  ${currentRaining ? '• Ongoing rain — stay alert' : `• Prepare for rain in ${etaLabel}`}
-  • All outdoor site and marine works activities are to cease immediately, Please make your way to the nearest lightning shelter thank you
-${debugLines}
-╚══ Updated: ${current.last_updated} ══╝`;
-
-  return { shouldAlert: true, message };
 }
 
-// ── Fetch Weather Data ───────────────────────────────────────────────
+// ── Fetch Weather Data ────────────────────────────────────────────────────
 async function fetchWeatherData(latitude, longitude) {
-  try {
-    // Validate inputs
-    if (!latitude || !longitude) {
-      throw new Error(`Invalid coordinates: latitude=${latitude}, longitude=${longitude}`);
-    }
-
-    if (!WEATHER_API_KEY || !WEATHER_API_BASE_URL) {
-      throw new Error('Missing Weather API credentials in environment variables');
-    }
-
-    const url = `${WEATHER_API_BASE_URL}/forecast.json?key=${WEATHER_API_KEY}&q=${latitude},${longitude}&aqi=no&alerts=no`;
-    
-    console.log(`🌐 Weather API Request: ${WEATHER_API_BASE_URL}/forecast.json?key=***&q=${latitude},${longitude}&aqi=no&alerts=no`);
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Weather API Error Response: ${errorText}`);
-      throw new Error(`Weather API error: ${response.status} ${response.statusText} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('❌ Error fetching weather data:', error.message);
-    throw error;
+  if (!latitude || !longitude) {
+    throw new Error(`Invalid coordinates: latitude=${latitude}, longitude=${longitude}`);
   }
+  if (!WEATHER_API_KEY || !WEATHER_API_BASE_URL) {
+    throw new Error('Missing WEATHER_API_KEY or WEATHER_API_BASE_URL in environment variables');
+  }
+
+  const url = `${WEATHER_API_BASE_URL}/current.json?key=${WEATHER_API_KEY}&q=${latitude},${longitude}&aqi=no`;
+  console.log(`Weather API request: /current.json?q=${latitude},${longitude}`);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Weather API error: ${response.status} ${response.statusText} — ${errorText}`);
+  }
+
+  return response.json();
 }
 
-// ── Send Telegram Notification ───────────────────────────────────────────
+// ── Send Telegram Alert ───────────────────────────────────────────────────
 async function sendTelegramAlert(message) {
-  try {
-    const url = `${TELEGRAM_API_BASE_URL}/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const payload = {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: message,
-      parse_mode: 'HTML',
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Telegram API error: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    console.log('Telegram alert sent successfully:', result.ok);
-    return result;
-  } catch (error) {
-    console.error('Error sending Telegram alert:', error.message);
-    throw error;
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_API_BASE_URL || !TELEGRAM_CHAT_ID) {
+    throw new Error('Missing Telegram credentials in environment variables');
   }
+
+  const url = `${TELEGRAM_API_BASE_URL}/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const payload = {
+    chat_id: TELEGRAM_CHAT_ID,
+    text: message,
+    parse_mode: 'HTML',
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Telegram API error: ${response.status} ${response.statusText} — ${errorText}`);
+  }
+
+  const result = await response.json();
+  console.log('Telegram alert sent:', result.ok);
+  return result;
 }
 
-// ── Main Weather Check Logic ───────────────────────────────────────────────
+// ── Main Weather Check ────────────────────────────────────────────────────
 async function runWeatherCheck() {
   try {
-    // Get configuration from environment or use defaults
     const latitude = process.env.LOCATION_LATITUDE;
     const longitude = process.env.LOCATION_LONGITUDE;
     const locationName = process.env.LOCATION_NAME;
 
-    // Log environment configuration for debugging
-    console.log('📋 Environment Configuration:');
-    console.log(`  • Location Name: ${locationName || '❌ NOT SET'}`);
-    console.log(`  • Latitude: ${latitude || '❌ NOT SET'}`);
-    console.log(`  • Longitude: ${longitude || '❌ NOT SET'}`);
-    console.log(`  • API Base URL: ${WEATHER_API_BASE_URL || '❌ NOT SET'}`);
-    console.log(`  • API Key: ${WEATHER_API_KEY ? '✅ SET' : '❌ NOT SET'}`);
+    console.log(`Checking weather for ${locationName} (${latitude}, ${longitude})`);
 
-    // Fetch weather data
-    console.log(
-      `📍 Fetching weather for ${locationName} (${latitude}, ${longitude})`
-    );
     const weatherData = await fetchWeatherData(latitude, longitude);
+    const conditionCode = weatherData.current.condition.code;
+    const conditionText = weatherData.current.condition.text;
+    const localtime = weatherData.location.localtime;
+    const isRaining = RAIN_CODES.has(conditionCode);
+    const lastState = await getLastState();
 
-    // Evaluate weather conditions and determine if alert should be sent
-    const { shouldAlert, message } = evaluateWeatherConditions(weatherData);
+    console.log(`Condition: "${conditionText}" (code: ${conditionCode})`);
+    console.log(`isRaining: ${isRaining} | lastState: ${lastState}`);
 
-    if (shouldAlert && message) {
-      console.log('🚨 Alert condition detected, sending Telegram notification');
-      await sendTelegramAlert(message);
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          success: true,
-          message: 'Weather alert sent successfully',
-          alertType: 'weather_notification',
-          timestamp: new Date().toISOString(),
-        }),
-      };
+    if (isRaining && lastState !== 'rain') {
+      // Transition to rain — send DETECTED
+      await sendTelegramAlert(buildDetectedMessage(localtime));
+      await saveState('rain');
+      console.log('Action: DETECTED alert sent');
+
+    } else if (!isRaining && lastState === 'rain') {
+      // Transition to clear after rain — send CLEARED
+      await sendTelegramAlert(buildClearedMessage(localtime));
+      await saveState('clear');
+      console.log('Action: CLEARED alert sent');
+
     } else {
-      console.log('✅ No alert needed - conditions are clear');
-      if (DEBUG && message) {
-        console.log('📊 Debug info:\n', message);
-      }
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          success: true,
-          message: 'No alert needed - conditions are clear',
-          alertType: 'no_alert',
-          timestamp: new Date().toISOString(),
-          debug: DEBUG ? message : undefined,
-        }),
-      };
+      // No state change
+      console.log('Action: No change, skipped');
     }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        success: true,
+        condition: conditionText,
+        conditionCode,
+        isRaining,
+        lastState,
+        timestamp: new Date().toISOString(),
+      }),
+    };
+
   } catch (error) {
-    console.error('❌ Error in weather check:', error.message);
+    console.error('Error in runWeatherCheck:', error.message);
     return {
       statusCode: 500,
       body: JSON.stringify({
@@ -337,5 +186,5 @@ async function runWeatherCheck() {
   }
 }
 
-// ── Export the main function ────────────────────────────────────────────────
+// ── Export ────────────────────────────────────────────────────────────────
 module.exports = { runWeatherCheck };
