@@ -20,8 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@netlify/blobs": "^10.7.4",
-    "@netlify/functions": "^2.0.0",
-    "@supabase/supabase-js": "^2.38.0"
+    "@netlify/functions": "^2.0.0"
   },
   "devDependencies": {
     "netlify-cli": "^17.0.0"
