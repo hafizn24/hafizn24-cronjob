@@ -6,17 +6,12 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API_BASE_URL = process.env.TELEGRAM_API_BASE_URL;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-const DEBUG = process.env.WEATHER_DEBUG_MODE;
+const DEBUG = process.env.WEATHER_DEBUG_MODE === 'true';
 
-// Lark Base (Bitable)
-const LARK_APP_ID = process.env.LARK_APP_ID;
-const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_OPEN_API_BASE_URL = process.env.LARK_OPEN_API_BASE_URL
-
-const BITABLE_APP_TOKEN = process.env.BITABLE_APP_TOKEN;
-const BITABLE_TABLE_ID = process.env.BITABLE_TABLE_ID;
-const BITABLE_VIEW_ID = process.env.BITABLE_VIEW_ID;
-const BITABLE_STATUS_FIELD_NAME = process.env.BITABLE_STATUS_FIELD_NAME;
+// Supabase Configuration
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const WEATHER_STATUS_TABLE = process.env.WEATHER_STATUS_TABLE;
 
 const RAIN_CODES = new Set([
   1087,
@@ -27,114 +22,86 @@ const RAIN_CODES = new Set([
   1273, 1276,
 ]);
 
-// ── Lark Auth ─────────────────────────────────────────────────────────────
-async function getTenantAccessToken() {
-  if (!LARK_APP_ID || !LARK_APP_SECRET) {
-    throw new Error('Missing LARK_APP_ID or LARK_APP_SECRET in environment variables');
+// ── Supabase Client ──────────────────────────────────────────────────────
+const { createClient } = require('@supabase/supabase-js');
+
+function getSupabaseClient() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY in environment variables');
   }
 
-  const url = `${LARK_OPEN_API_BASE_URL}/auth/v3/tenant_access_token/internal`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }),
-  });
-
-  const data = await resp.json();
-  if (!resp.ok || data.code !== 0) {
-    throw new Error(`Lark auth error: ${resp.status} ${resp.statusText} — ${JSON.stringify(data)}`);
-  }
-
-  return data.tenant_access_token;
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
-async function larkApi(path, { method = 'GET', token, body } = {}) {
-  const url = `${LARK_OPEN_API_BASE_URL}${path}`;
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json; charset=utf-8',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+// ── Supabase State Helpers ───────────────────────────────────────────────
+async function getOrCreateStateRecord() {
+  const supabase = getSupabaseClient();
 
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || (typeof data.code === 'number' && data.code !== 0)) {
-    throw new Error(`Lark API error: ${resp.status} ${resp.statusText} — ${JSON.stringify(data)}`);
-  }
-  return data;
-}
+  // Try to fetch the first record from weather_status table
+  const { data, error } = await supabase
+    .from(WEATHER_STATUS_TABLE)
+    .select('*')
+    .limit(1);
 
-// ── Lark Base State Helpers ───────────────────────────────────────────────
-async function getOrCreateStateRecord(token) {
-  if (!BITABLE_APP_TOKEN || !BITABLE_TABLE_ID) {
-    throw new Error('Missing BITABLE_APP_TOKEN or BITABLE_TABLE_ID in environment variables');
+  if (error) {
+    throw new Error(`Supabase read error: ${error.message}`);
   }
 
-  // Try to reuse the first row as the singleton state row
-  const params = new URLSearchParams({ page_size: '1' });
-  if (BITABLE_VIEW_ID) params.set('view_id', BITABLE_VIEW_ID);
-
-  const list = await larkApi(
-    `/bitable/v1/apps/${BITABLE_APP_TOKEN}/tables/${BITABLE_TABLE_ID}/records?${params.toString()}`,
-    { token }
-  );
-
-  const items = list?.data?.items || [];
-  if (items.length > 0) return items[0];
+  if (data && data.length > 0) {
+    return data[0];
+  }
 
   // No records yet → create one
-  const created = await larkApi(
-    `/bitable/v1/apps/${BITABLE_APP_TOKEN}/tables/${BITABLE_TABLE_ID}/records`,
-    {
-      method: 'POST',
-      token,
-      body: { fields: { [BITABLE_STATUS_FIELD_NAME]: '' } },
-    }
-  );
+  const { data: created, error: createError } = await supabase
+    .from(WEATHER_STATUS_TABLE)
+    .insert({ weather_status: '' })
+    .select()
+    .single();
 
-  return created.data.record;
+  if (createError) {
+    throw new Error(`Supabase insert error: ${createError.message}`);
+  }
+
+  return created;
 }
 
 async function getLastState() {
   try {
-    const token = await getTenantAccessToken();
-    const record = await getOrCreateStateRecord(token);
-    const raw = record?.fields?.[BITABLE_STATUS_FIELD_NAME];
+    const record = await getOrCreateStateRecord();
+    const raw = record?.weather_status;
 
-    // Treat empty string / undefined as “no state”
+    // Treat empty string / undefined as "no state"
     const v = (typeof raw === 'string' ? raw.trim() : '') || null;
-    return { state: v, record_id: record.record_id }; // state: 'rain'|'clear'|null
+    return { state: v, record_id: record.id }; // state: 'rain'|'clear'|null
   } catch (err) {
-    console.error('Lark Base read error:', err.message);
+    console.error('Supabase read error:', err.message);
     return { state: null, record_id: null };
   }
 }
 
 async function saveState(state, recordId) {
   try {
-    const token = await getTenantAccessToken();
+    const supabase = getSupabaseClient();
 
     // If we don't have a record yet (unexpected), create/reuse one.
     let record_id = recordId;
     if (!record_id) {
-      const record = await getOrCreateStateRecord(token);
-      record_id = record.record_id;
+      const record = await getOrCreateStateRecord();
+      record_id = record.id;
     }
 
-    await larkApi(
-      `/bitable/v1/apps/${BITABLE_APP_TOKEN}/tables/${BITABLE_TABLE_ID}/records/${record_id}`,
-      {
-        method: 'PUT',
-        token,
-        body: { fields: { [BITABLE_STATUS_FIELD_NAME]: state } },
-      }
-    );
+    const { error } = await supabase
+      .from(WEATHER_STATUS_TABLE)
+      .update({ weather_status: state })
+      .eq('id', record_id);
 
-    console.log('State saved to Lark Base:', state);
+    if (error) {
+      throw new Error(`Supabase update error: ${error.message}`);
+    }
+
+    console.log('State saved to Supabase:', state);
   } catch (err) {
-    console.error('Lark Base write error:', err.message);
+    console.error('Supabase write error:', err.message);
   }
 }
 
