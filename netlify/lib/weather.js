@@ -14,6 +14,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const WEATHER_STATUS_TABLE = process.env.WEATHER_STATUS_TABLE;
 
 const RAIN_CODES = new Set([
+  1063,              // Patchy rain possible (critical for Malaysia)
   1087,
   1150, 1153,
   1180, 1183, 1186, 1189, 1192, 1195,
@@ -31,6 +32,31 @@ function getSupabaseClient() {
   }
 
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+// ── Supabase Logging ────────────────────────────────────────────────────
+async function logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent) {
+  try {
+    const supabase = getSupabaseClient();
+    const logsTable = 'weather_logs';
+
+    const { error } = await supabase
+      .from(logsTable)
+      .insert({
+        condition_code: conditionCode,
+        precip_mm: precipMm,
+        is_raining: isRaining,
+        last_state: lastState,
+        alert_sent: alertSent,
+        timestamp: new Date().toISOString(),
+      });
+
+    if (error) {
+      console.warn(`Supabase log insert warning: ${error.message}`);
+    }
+  } catch (err) {
+    console.warn('Failed to log weather check to Supabase:', err.message);
+  }
 }
 
 // ── Supabase State Helpers ───────────────────────────────────────────────
@@ -205,13 +231,15 @@ async function runWeatherCheck() {
     const weatherData = await fetchWeatherData(latitude, longitude);
     const conditionCode = weatherData.current.condition.code;
     const conditionText = weatherData.current.condition.text;
+    const precipMm = weatherData.current.precip_mm || 0;
     const localtime = weatherData.location.localtime;
 
-    const isRaining = RAIN_CODES.has(conditionCode);
+    const isRaining = RAIN_CODES.has(conditionCode) || precipMm > 0;
 
     const { state: lastState, record_id } = await getLastState();
 
     console.log(`Condition: "${conditionText}" (code: ${conditionCode})`);
+    console.log(`Precipitation: ${precipMm}mm`);
     console.log(`isRaining: ${isRaining} | lastState: ${lastState}`);
 
     // ── Transition rules ────────────────────────────────────────────────
@@ -267,12 +295,16 @@ async function runWeatherCheck() {
 
     console.log(`Action: ${action}`);
 
+    // Log the weather check to Supabase for audit trail
+    await logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent);
+
     return {
       statusCode: 200,
       body: JSON.stringify({
         success: true,
         condition: conditionText,
         conditionCode,
+        precipMm,
         isRaining,
         lastState,
         action,
