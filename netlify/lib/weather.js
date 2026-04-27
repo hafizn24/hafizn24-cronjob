@@ -35,7 +35,7 @@ function getSupabaseClient() {
 }
 
 // ── Supabase Logging ────────────────────────────────────────────────────
-async function logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent) {
+async function logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent, localtime) {
   try {
     const supabase = getSupabaseClient();
     const logsTable = 'weather_logs';
@@ -48,7 +48,7 @@ async function logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, las
         is_raining: isRaining,
         last_state: lastState,
         alert_sent: alertSent,
-        timestamp: new Date().toISOString(),
+        timestamp: localtime,
       });
 
     if (error) {
@@ -234,7 +234,7 @@ async function runWeatherCheck() {
     const precipMm = weatherData.current.precip_mm || 0;
     const localtime = weatherData.location.localtime;
 
-    const isRaining = RAIN_CODES.has(conditionCode) || precipMm > 0;
+    const isRaining = RAIN_CODES.has(conditionCode) && precipMm > 0;
 
     const { state: lastState, record_id } = await getLastState();
 
@@ -295,8 +295,10 @@ async function runWeatherCheck() {
 
     console.log(`Action: ${action}`);
 
-    // Log the weather check to Supabase for audit trail
-    await logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent);
+    // Only log to Supabase when an alert was actually sent (state changed)
+    if (alertSent) {
+      await logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent, localtime);
+    }
 
     return {
       statusCode: 200,
