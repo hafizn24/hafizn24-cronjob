@@ -232,7 +232,7 @@ async function runWeatherCheck() {
     const localtime = weatherData.location.localtime;
 
     // ── Rain detection: condition code priority + precipitation backup ────
-    const isRaining = DEFINITIVE_RAIN_CODES.includes(conditionCode) && precipMm > 0.5;
+    const isRaining = DEFINITIVE_RAIN_CODES.includes(conditionCode) && precipMm >= 1.0;
 
     if (DEBUG) {
       console.log(`Rain detection — condition code: ${conditionCode} (definitive: ${DEFINITIVE_RAIN_CODES.includes(conditionCode)}), precip: ${precipMm}mm (>0.5: ${precipMm > 0.5})`);
