@@ -13,11 +13,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const WEATHER_STATUS_TABLE = process.env.WEATHER_STATUS_TABLE;
 
-// ── Rain Detection Thresholds ─────────────────────────────────────────────
-// Any 2 of 3 conditions = isRaining true
-const RAIN_PRECIP_MM_THRESHOLD  = 0.1;  // precip_mm > 0.1
-const RAIN_HUMIDITY_THRESHOLD   = 85;   // humidity > 85%
-const RAIN_DEWPOINT_SPREAD_MAX  = 2;    // (temp_c - dewpoint_c) < 2°C
+// ── Rain Detection ────────────────────────────────────────────────────────
+// Definitive WeatherAPI rain condition codes + precipitation backup
+const DEFINITIVE_RAIN_CODES = [1153,1168,1171,1183,1186,1189,1192,1195,1198,1201,1204,1207,1240,1243,1246,1249,1252,1273,1276];
 
 // ── Supabase Client ──────────────────────────────────────────────────────
 const { createClient } = require('@supabase/supabase-js');
@@ -231,27 +229,20 @@ async function runWeatherCheck() {
     const conditionText = weatherData.current.condition.text;
     const precipMm = weatherData.current.precip_mm || 0;
     const humidity = weatherData.current.humidity || 0;
-    const tempC = weatherData.current.temp_c || 0;
-    const dewpointC = weatherData.current.dewpoint_c || 0;
-    const dewpointSpread = parseFloat((tempC - dewpointC).toFixed(2));
     const localtime = weatherData.location.localtime;
 
-    // ── Rain confidence: any 2 of 3 conditions = isRaining ──────────────
-    const condPrecip   = precipMm > RAIN_PRECIP_MM_THRESHOLD;
-    const condHumidity = humidity > RAIN_HUMIDITY_THRESHOLD;
-    const condDewpoint = dewpointSpread < RAIN_DEWPOINT_SPREAD_MAX;
-    const conditionsMet = [condPrecip, condHumidity, condDewpoint].filter(Boolean).length;
-    const isRaining = conditionsMet >= 2;
+    // ── Rain detection: condition code priority + precipitation backup ────
+    const isRaining = DEFINITIVE_RAIN_CODES.includes(conditionCode) && precipMm > 0.5;
 
     if (DEBUG) {
-      console.log(`Rain conditions — precip: ${condPrecip} (${precipMm}mm), humidity: ${condHumidity} (${humidity}%), dewpoint spread: ${condDewpoint} (${dewpointSpread}°C) → ${conditionsMet}/3 met`);
+      console.log(`Rain detection — condition code: ${conditionCode} (definitive: ${DEFINITIVE_RAIN_CODES.includes(conditionCode)}), precip: ${precipMm}mm (>0.5: ${precipMm > 0.5})`);
     }
 
     const { state: lastState, record_id } = await getLastState();
 
     console.log(`Condition: "${conditionText}" (code: ${conditionCode})`);
-    console.log(`Precipitation: ${precipMm}mm | Humidity: ${humidity}% | Dewpoint spread: ${dewpointSpread}°C`);
-    console.log(`isRaining: ${isRaining} (${conditionsMet}/3 conditions met) | lastState: ${lastState}`);
+    console.log(`Precipitation: ${precipMm}mm | Humidity: ${humidity}%`);
+    console.log(`isRaining: ${isRaining} | lastState: ${lastState}`);
 
     // ── Transition rules ────────────────────────────────────────────────
     // No state
@@ -307,7 +298,7 @@ async function runWeatherCheck() {
     console.log(`Action: ${action}`);
 
     // Log every cron run to Supabase
-    await logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent, localtime, humidity, dewpointSpread);
+    await logWeatherCheckToSupabase(conditionCode, precipMm, isRaining, lastState, alertSent, localtime, humidity, null);
 
     return {
       statusCode: 200,
@@ -317,8 +308,6 @@ async function runWeatherCheck() {
         conditionCode,
         precipMm,
         humidity,
-        dewpointSpread,
-        conditionsMet,
         isRaining,
         lastState,
         action,
