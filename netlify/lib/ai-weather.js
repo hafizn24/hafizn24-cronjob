@@ -1,79 +1,72 @@
 const { GoogleGenAI } = require('@google/genai');
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// ── Telegram Config ─────────────────────────────────────
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
 // ── Get Weather from Gemini (Grounded) ──────────────────
 async function getWeather(location = 'Subang Jaya') {
-  const prompt = `
-    Current weather in ${location}.
+  const now = new Date().toLocaleString('en-MY', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
 
-    Return ONLY JSON:
-    {
-    "condition": "string",
-    "temperature": number,
-    "humidity": number,
-    "precip_mm": number,
-    "is_rain": boolean
-    }
+  const prompt = `
+    You are a weather reporter. Using Google Search, get the current weather for ${location}.
+
+    Return ONLY a plain-text Telegram message in this exact format (no markdown, no backticks):
+
+    🌤 Weather Update — ${location}
+    🕐 ${now}
+
+    Condition : [e.g. Partly Cloudy]
+    Temperature: [number]°C
+    Humidity   : [number]%
+    Rainfall   : [number] mm
+    Raining now: [Yes / No]
+
+    📡 Source: [one source name, e.g. Weather.com or AccuWeather]
+
+    Do not add anything else. No explanations. No code.
     `;
 
   const res = await ai.models.generateContent({
     model: 'gemma-3-27b-it',
-    tools: [{ google_search_retrieval: {} }],
+    tools: [{ googleSearch: {} }],
     contents: [{ role: 'user', parts: [{ text: prompt }] }]
   });
 
-  try {
-    return JSON.parse(res.text.trim());
-  } catch (e) {
-    console.error('JSON parse error:', res.text);
-    return null;
-  }
+  const text = res.text?.trim();
+  if (!text) throw new Error('Empty response from Gemini');
+  return text;
 }
 
 // ── Send Telegram ───────────────────────────────────────
 async function sendTelegram(message) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-
-  await fetch(url, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      text: message
-    })
+    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message })
   });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Telegram error: ${err}`);
+  }
 }
 
 // ── Main Runner ─────────────────────────────────────────
 async function runAIWeatherCheck() {
-  const weather = await getWeather('Kuala Lumpur');
-
-  if (!weather) return;
-
-  console.log(weather);
-
-  if (weather) {
-    const msg = `
-    🌧 Current Weather
-
-    Condition: ${weather.condition}
-    Temp: ${weather.temperature}°C
-    Humidity: ${weather.humidity}%
-    Precip: ${weather.precip_mm}mm
-    Rain: ${weather.rain}
-    `;
-
-    await sendTelegram(msg);
+  try {
+    const message = await getWeather('Kuala Lumpur');
+    console.log('Sending:\n', message);
+    await sendTelegram(message);
     console.log('Alert sent');
-  } else {
-    console.log('No rain');
+  } catch (err) {
+    console.error('Weather check failed:', err.message);
   }
 }
 
