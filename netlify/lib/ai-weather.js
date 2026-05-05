@@ -6,14 +6,14 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
 // ── Get Weather from Gemini (Grounded) ──────────────────
-async function getWeather(location = 'Subang Jaya') {
+async function getWeather(location) {
 
   const prompt = `
     You are a weather reporter. Using Google Search, get the current weather for ${location}.
 
     Return ONLY a plain-text Telegram message in this exact format (no markdown, no backticks):
 
-    🌤 Weather Update — ${location}
+    🌤 Weather Update — [location]
     🕐 [date-time]
 
     Condition : [e.g. Partly Cloudy]
@@ -56,7 +56,7 @@ async function sendTelegram(message) {
 // ── Main Runner ─────────────────────────────────────────
 async function runAIWeatherCheck() {
   try {
-    const message = await getWeather('Kuala Lumpur');
+    const message = await getWeather('Subang Jaya');
     console.log('Sending:\n', message);
     await sendTelegram(message);
     console.log('Alert sent');
