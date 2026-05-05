@@ -7,11 +7,6 @@ const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
 // ── Get Weather from Gemini (Grounded) ──────────────────
 async function getWeather(location = 'Subang Jaya') {
-  const now = new Date().toLocaleString('en-MY', {
-    timeZone: 'Asia/Kuala_Lumpur',
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  });
 
   const prompt = `
     You are a weather reporter. Using Google Search, get the current weather for ${location}.
@@ -19,7 +14,7 @@ async function getWeather(location = 'Subang Jaya') {
     Return ONLY a plain-text Telegram message in this exact format (no markdown, no backticks):
 
     🌤 Weather Update — ${location}
-    🕐 ${now}
+    🕐 [date-time]
 
     Condition : [e.g. Partly Cloudy]
     Temperature: [number]°C
