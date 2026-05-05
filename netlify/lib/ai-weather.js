@@ -5,16 +5,22 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
-// ── Get Weather from Gemini (Grounded) ──────────────────
+// ── Get Weather from Gemini (Grounded + Streaming) ──────
 async function getWeather(location) {
+  const now = new Date().toLocaleString('en-MY', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    dateStyle: 'full',
+    timeStyle: 'short'
+  });
 
   const prompt = `
     You are a weather reporter. Using Google Search, get the current weather for ${location}.
+    The current date and time is: ${now} (MYT).
 
     Return ONLY a plain-text Telegram message in this exact format (no markdown, no backticks):
 
     🌤 Weather Update — [location]
-    🕐 [date-time]
+    🕐 [dd-mm-yyyy hh:mm:ss]
 
     Condition : [e.g. Partly Cloudy]
     Temperature: [number]°C
@@ -25,15 +31,23 @@ async function getWeather(location) {
     📡 Source: [one source name, e.g. Weather.com or AccuWeather]
 
     Do not add anything else. No explanations. No code.
-    `;
+  `;
 
-  const res = await ai.models.generateContent({
+  const response = await ai.models.generateContentStream({
     model: 'gemini-2.5-flash',
-    tools: [{ googleSearch: {} }],
-    contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      tools: [{ googleSearch: {} }],
+    }
   });
 
-  const text = res.text?.trim();
+  // Collect streamed chunks into final message
+  let message = '';
+  for await (const chunk of response) {
+    message += chunk.text ?? '';
+  }
+
+  const text = message.trim();
   if (!text) throw new Error('Empty response from Gemini');
   return text;
 }
