@@ -1,63 +1,55 @@
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
-// ── Step 1: Fetch raw weather via Gemini 2.5 Flash (search grounding) ──
-async function fetchRawWeather(location, now) {
-  const response = await ai.models.generateContentStream({
-    model: 'gemini-2.5-flash',
-    contents: [{
-      role: 'user',
-      parts: [{ text: `Get the current weather for ${location} as of ${now} MYT. Return raw facts only: condition, temperature °C, humidity %, rainfall mm, is it raining now, and the source name. No formatting.` }]
-    }],
-    config: {
-      tools: [{ googleSearch: {} }],
-    }
-  });
+// ── Define models once ─────────────────────────────────────────────────────
+const searchModel = genAI.getGenerativeModel({ 
+  model: 'gemini-2.5-flash',
+  tools: [{ googleSearchRetrieval: {} }]
+});
 
-  let raw = '';
-  for await (const chunk of response) raw += chunk.text ?? '';
-  if (!raw.trim()) throw new Error('Empty response from Gemini');
-  return raw.trim();
+const formatModel = genAI.getGenerativeModel({ model: 'gemma-3-27b-it' });
+
+// ── Simple in-memory lock to prevent concurrent runs ──────────────────────
+let isRunning = false;
+let lastRunAt = 0;
+const MIN_INTERVAL_MS = 60_000;
+
+// ── Fetch and format weather ───────────────────────────────────────────────
+async function fetchAndFormatWeather(location, now) {
+  // Step 1: Fetch with Grounding
+  const searchPrompt = `Search Google Weather for the current weather in ${location} as of ${now} MYT. 
+  Return ONLY raw facts: condition, temp °C, humidity %, rainfall mm, and if it is raining.`;
+
+  const searchResult = await searchModel.generateContent(searchPrompt);
+  const rawWeather = searchResult.response.text();
+
+  // Step 2: Format with Gemma
+  const formatPrompt = `
+    Format this data into a plain-text Telegram message.
+    Use this EXACT format (no markdown, no backticks, no extra text):
+
+    🌤 Weather Update — ${location}
+    🕐 ${now} MYT
+
+    Condition : [condition]
+    Temperature: [number]°C
+    Humidity   : [number]%
+    Rainfall   : [number] mm
+    Raining now: [Yes / No]
+
+    📡 Source: Google Weather
+
+    Data: ${rawWeather}`;
+
+  const formatResult = await formatModel.generateContent(formatPrompt);
+  return formatResult.response.text().trim();
 }
 
-// ── Step 2: Format message via Gemma 3 27B (no search, free) ────────────
-async function formatWeatherMessage(rawWeather, location, now) {
-  const response = await ai.models.generateContentStream({
-    model: 'gemma-3-27b-it',
-    contents: [{
-      role: 'user',
-      parts: [{ text: `
-        Format the weather data below into a plain-text Telegram message.
-        Use this EXACT format (no markdown, no backticks, no extra text):
-
-        🌤 Weather Update — ${location}
-        🕐 ${now} MYT
-
-        Condition : [condition]
-        Temperature: [number]°C
-        Humidity   : [number]%
-        Rainfall   : [number] mm
-        Raining now: [Yes / No]
-
-        📡 Source: [source]
-
-        Weather data:
-        ${rawWeather}
-      `}]
-    }],
-  });
-
-  let message = '';
-  for await (const chunk of response) message += chunk.text ?? '';
-  if (!message.trim()) throw new Error('Empty response from Gemma');
-  return message.trim();
-}
-
-// ── Orchestrator ─────────────────────────────────────────────────────────
+// ── Orchestrator ──────────────────────────────────────────────────────────
 async function getWeather(location) {
   const now = new Date().toLocaleString('en-MY', {
     timeZone: 'Asia/Kuala_Lumpur',
@@ -65,8 +57,7 @@ async function getWeather(location) {
     timeStyle: 'short'
   });
 
-  const rawWeather = await fetchRawWeather(location, now);
-  const message    = await formatWeatherMessage(rawWeather, location, now);
+  const message = await fetchAndFormatWeather(location, now);
   return message;
 }
 
@@ -87,13 +78,34 @@ async function sendTelegram(message) {
 
 // ── Main Runner ───────────────────────────────────────────────────────────
 async function runAIWeatherCheck() {
+  const now = Date.now();
+
+  if (isRunning) {
+    console.log('Already running, skipping this invocation');
+    return;
+  }
+
+  if (now - lastRunAt < MIN_INTERVAL_MS) {
+    console.log(`Too soon since last run (${Math.round((now - lastRunAt) / 1000)}s ago), skipping`);
+    return;
+  }
+
+  isRunning = true;
+  lastRunAt = now;
+
   try {
     const message = await getWeather('Subang Jaya');
     console.log('Sending:\n', message);
     await sendTelegram(message);
     console.log('Alert sent');
   } catch (err) {
-    console.error('Weather check failed:', err.message);
+    console.error('Weather check failed:', JSON.stringify({ error: err }));
+
+    if (err?.message?.includes('429') || err?.status === 429) {
+      console.error('Gemini free tier quota exhausted. Resets daily at midnight PT.');
+    }
+  } finally {
+    isRunning = false;
   }
 }
 
