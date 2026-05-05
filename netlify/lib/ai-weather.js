@@ -28,7 +28,7 @@ async function getWeather(location) {
     `;
 
   const res = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     tools: [{ googleSearch: {} }],
     contents: [{ role: 'user', parts: [{ text: prompt }] }]
   });
