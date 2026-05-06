@@ -7,8 +7,8 @@ const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
 // ── Define models once ─────────────────────────────────────────────────────
 const searchModel = genAI.getGenerativeModel({ 
-  model: 'gemini-2.5-flash',
-  tools: [{ googleSearchRetrieval: {} }]
+  model: 'gemini-3.1-flash-lite',
+  tools: [{ googleSearch: {} }]
 });
 
 const formatModel = genAI.getGenerativeModel({ model: 'gemma-3-27b-it' });
@@ -20,33 +20,38 @@ const MIN_INTERVAL_MS = 60_000;
 
 // ── Fetch and format weather ───────────────────────────────────────────────
 async function fetchAndFormatWeather(location, now) {
-  // Step 1: Fetch with Grounding
-  const searchPrompt = `Search Google Weather for the current weather in ${location} as of ${now} MYT. 
-  Return ONLY raw facts: condition, temp °C, humidity %, rainfall mm, and if it is raining.`;
+  try {
+    // Step 1: Fetch with 500 RPD Gemini 3.1 Flash Lite
+    const searchPrompt = `Search Google Weather for the current weather in ${location} as of ${now} MYT. 
+    Return ONLY raw facts: condition, temp °C, humidity %, rainfall mm, and if it is raining.`;
 
-  const searchResult = await searchModel.generateContent(searchPrompt);
-  const rawWeather = searchResult.response.text();
+    const searchResult = await searchModel.generateContent(searchPrompt);
+    const rawWeather = searchResult.response.text();
 
-  // Step 2: Format with Gemma
-  const formatPrompt = `
-    Format this data into a plain-text Telegram message.
-    Use this EXACT format (no markdown, no backticks, no extra text):
+    // Step 2: Format with 14.4K RPD Gemma 3
+    const formatPrompt = `
+      Format this data into a plain-text Telegram message.
+      Use this EXACT format (no markdown, no backticks, no extra text):
 
-    🌤 Weather Update — ${location}
-    🕐 ${now} MYT
+      🌤 Weather Update — ${location}
+      🕐 ${now} MYT
 
-    Condition : [condition]
-    Temperature: [number]°C
-    Humidity   : [number]%
-    Rainfall   : [number] mm
-    Raining now: [Yes / No]
+      Condition : [condition]
+      Temperature: [number]°C
+      Humidity   : [number]%
+      Rainfall   : [number] mm
+      Raining now: [Yes / No]
 
-    📡 Source: Google Weather
+      📡 Source: Google Weather
 
-    Data: ${rawWeather}`;
+      Data: ${rawWeather}`;
 
-  const formatResult = await formatModel.generateContent(formatPrompt);
-  return formatResult.response.text().trim();
+    const formatResult = await formatModel.generateContent(formatPrompt);
+    return formatResult.response.text().trim();
+  } catch (e) {
+    console.error("Model Error:", e.message);
+    throw e;
+  }
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────
