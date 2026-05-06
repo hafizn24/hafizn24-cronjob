@@ -7,7 +7,7 @@ const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
 // ── Define models once ─────────────────────────────────────────────────────
 const searchModel = genAI.getGenerativeModel({ 
-  model: 'gemini-3.1-flash-lite',
+  model: 'gemini-2.5-flash',
   tools: [{ googleSearch: {} }]
 });
 
