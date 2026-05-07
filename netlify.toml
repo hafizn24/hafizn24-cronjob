@@ -10,3 +10,7 @@
 [functions."weather-cron"]
   schedule = "@hourly"
   description = "Scheduled weather monitoring and alert system"
+
+[functions."weather-check-background"]
+  schedule = ""
+  description = "Background function for heavy weather processing (26-minute timeout)"
