@@ -2,8 +2,8 @@ name: Weather Cron Job
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # every hour — adjust as needed
-  workflow_dispatch:        # manual trigger from GitHub UI
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
 
 jobs:
   weather-check:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: dev    # 👈 change to your target branch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
