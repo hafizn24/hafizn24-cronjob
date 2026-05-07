@@ -6,15 +6,23 @@
   publish = "public"
   functions = "netlify/functions"
 
-# Build environment variables
+# Build environment variables (applies during build only)
 [build.environment]
   PUPPETEER_CACHE_DIR = "/opt/build/cache/puppeteer"
+  PUPPETEER_SKIP_DOWNLOAD = "false"
+
+# Runtime environment variables (applies to all functions at runtime)
+[functions]
+  node_bundler = "esbuild"
+
+[functions.environment]
+  PUPPETEER_CACHE_DIR = "/opt/build/cache/puppeteer"
+  PUPPETEER_EXECUTABLE_PATH = "/opt/build/cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome"
 
 # Function configuration
 [functions."weather-cron"]
-  schedule = "@hourly"
+  schedule = "*/30 * * * *"
   description = "Scheduled weather monitoring and alert system"
 
 [functions."weather-check-background"]
-  schedule = ""
   description = "Background function for heavy weather processing (26-minute timeout)"

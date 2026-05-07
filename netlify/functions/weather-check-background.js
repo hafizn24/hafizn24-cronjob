@@ -1,5 +1,8 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const puppeteer = require('puppeteer');
+const { execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Gemma 4 26B - Native Multimodal (May 2026 release)
@@ -13,24 +16,91 @@ let isRunning = false;
 let lastRunAt = 0;
 const MIN_INTERVAL_MS = 60_000;
 
+/**
+ * Resolves the Chrome executable path at runtime.
+ * Priority:
+ *   1. PUPPETEER_EXECUTABLE_PATH env var (explicit override)
+ *   2. puppeteer.executablePath() — reads from its own installed cache
+ *   3. Common Netlify/Lambda cache locations (glob search)
+ */
+function resolveChromePath() {
+    // 1. Explicit env override
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        const p = process.env.PUPPETEER_EXECUTABLE_PATH;
+        if (fs.existsSync(p)) {
+            console.log('🔍 Chrome found via PUPPETEER_EXECUTABLE_PATH:', p);
+            return p;
+        }
+        console.warn('⚠️  PUPPETEER_EXECUTABLE_PATH set but file not found:', p);
+    }
+
+    // 2. Ask puppeteer itself
+    try {
+        const p = puppeteer.executablePath();
+        if (fs.existsSync(p)) {
+            console.log('🔍 Chrome found via puppeteer.executablePath():', p);
+            return p;
+        }
+    } catch (_) { /* ignore */ }
+
+    // 3. Search known cache directories
+    const cacheDirs = [
+        process.env.PUPPETEER_CACHE_DIR,
+        '/opt/build/cache/puppeteer',
+        path.join(process.env.HOME || '', '.cache', 'puppeteer'),
+        '/opt/buildhome/.cache/puppeteer',
+    ].filter(Boolean);
+
+    for (const dir of cacheDirs) {
+        if (!fs.existsSync(dir)) continue;
+        try {
+            // find the chrome binary recursively under the cache dir
+            const result = execSync(`find "${dir}" -name "chrome" -type f 2>/dev/null | head -1`)
+                .toString()
+                .trim();
+            if (result && fs.existsSync(result)) {
+                console.log('🔍 Chrome found via filesystem search:', result);
+                return result;
+            }
+        } catch (_) { /* ignore */ }
+    }
+
+    // 4. Give up — let puppeteer try its default (will throw a clear error)
+    console.warn('⚠️  Could not resolve Chrome path. Letting Puppeteer use its default.');
+    return undefined;
+}
+
 async function getWeatherScreenshotBase64() {
     const url = 'https://www.accuweather.com/en/my/subang-jaya/3588486/current-weather/3588486';
-    const browser = await puppeteer.launch({
-        headless: "new",
+
+    const launchOptions = {
+        headless: 'new',
         args: [
             '--disable-http2',
             '--no-sandbox',
             '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',          // important for low-memory envs
+            '--disable-gpu',
+            '--single-process',                  // helps in serverless environments
             '--disable-blink-features=AutomationControlled',
         ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-    });
+    };
+
+    const chromePath = resolveChromePath();
+    if (chromePath) {
+        launchOptions.executablePath = chromePath;
+    }
+
+    const browser = await puppeteer.launch(launchOptions);
 
     try {
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        );
 
-        // Block images/fonts to ensure we hit the 30s limit
+        // Block images/fonts to speed up load
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'font', 'media'].includes(req.resourceType())) {
@@ -55,7 +125,7 @@ async function getWeatherScreenshotBase64() {
         return base64;
 
     } catch (err) {
-        if (browser) await browser.close();
+        await browser.close();
         throw err;
     }
 }
@@ -95,10 +165,10 @@ Raining now: [Yes/No]
 
 📡 Source: AccuWeather (Gemma 4)
 
-Do not add any other text before or after this block.`;;
+Do not add any other text before or after this block.`;
 
         const result = await model.generateContent([
-            { inlineData: { data: base64Image, mimeType: "image/png" } },
+            { inlineData: { data: base64Image, mimeType: 'image/png' } },
             prompt
         ]);
 
@@ -111,7 +181,7 @@ Do not add any other text before or after this block.`;;
         // 3. Send to Telegram
         await sendTelegramAlert(finalMessage);
 
-        console.log('✅ Success: Alert Sent: ', finalMessage);
+        console.log('✅ Success: Alert Sent:\n', finalMessage);
         return { statusCode: 200, body: 'Weather alert sent successfully' };
 
     } catch (err) {
@@ -123,7 +193,6 @@ Do not add any other text before or after this block.`;;
 }
 
 async function sendTelegramAlert(message) {
-
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_API_BASE_URL || !TELEGRAM_CHAT_ID) {
         throw new Error('Missing Telegram credentials in environment variables');
     }
