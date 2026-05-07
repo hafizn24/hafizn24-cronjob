@@ -22,7 +22,8 @@ async function getWeatherScreenshotBase64() {
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-blink-features=AutomationControlled',
-        ]
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
     });
 
     try {

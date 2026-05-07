@@ -6,6 +6,10 @@
   publish = "public"
   functions = "netlify/functions"
 
+# Build environment variables
+[build.environment]
+  PUPPETEER_CACHE_DIR = "/opt/build/cache/puppeteer"
+
 # Function configuration
 [functions."weather-cron"]
   schedule = "@hourly"

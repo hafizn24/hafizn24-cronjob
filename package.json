@@ -4,7 +4,8 @@
   "description": "Weather Report Scheduling Endpoint - Automated weather monitoring and alert system",
   "main": "index.js",
   "scripts": {
-    "build": "mkdir -p public && echo 'ok' > public/index.html",
+    "build": "npm run install:browser && mkdir -p public && echo 'ok' > public/index.html",
+    "install:browser": "npx puppeteer browsers install chrome",
     "dev": "netlify functions:invoke weather-cron",
     "test": "node test/test-weather-logic.js"
   },
