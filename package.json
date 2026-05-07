@@ -4,9 +4,8 @@
   "description": "Weather Report Scheduling Endpoint - Automated weather monitoring and alert system",
   "main": "index.js",
   "scripts": {
-    "build": "npm run install:browser && mkdir -p public && echo 'ok' > public/index.html",
-    "install:browser": "npx puppeteer browsers install chrome",
-    "dev": "netlify functions:invoke weather-cron",
+    "build": "mkdir -p public && echo 'ok' > public/index.html",
+    "cron": "node scripts/weather-cron.js",
     "test": "node test/test-weather-logic.js"
   },
   "keywords": [
@@ -20,14 +19,8 @@
   "author": "Hafiz N24",
   "license": "MIT",
   "dependencies": {
-    "@google/genai": "^1.51.0",
     "@google/generative-ai": "^0.24.1",
-    "@netlify/blobs": "^10.7.4",
-    "@netlify/functions": "^2.0.0",
-    "@supabase/supabase-js": "^2.38.0",
     "puppeteer": "^22.0.0"
   },
-  "devDependencies": {
-    "netlify-cli": "^17.0.0"
-  }
+  "devDependencies": {}
 }
