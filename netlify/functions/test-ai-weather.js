@@ -1,4 +1,4 @@
-const { runAIWeatherCheck } = require('../lib/ai-weather');
+const { runAIWeatherCheck } = require('../functions/weather-check-background');
 
 module.exports.handler = async (event, context) => {
   console.log('AI Weather triggered via HTTP at', new Date().toISOString());

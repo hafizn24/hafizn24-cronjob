@@ -150,7 +150,10 @@ async function sendTelegramAlert(message) {
     return result;
 }
 
-module.exports.handler = async (event, context) => {
-    console.log('🎯 Background weather check started at', new Date().toISOString());
-    return runAIWeatherCheck();
+module.exports = {
+    handler: async (event, context) => {
+        console.log('🎯 Background weather check started at', new Date().toISOString());
+        return runAIWeatherCheck();
+    },
+    runAIWeatherCheck
 };
