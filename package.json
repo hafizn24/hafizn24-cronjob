@@ -1,26 +1,15 @@
 {
-  "name": "hafizn24-cronjob",
+  "name": "news-bulletin-bot",
   "version": "1.0.0",
-  "description": "Weather Report Scheduling Endpoint - Automated weather monitoring and alert system",
-  "main": "index.js",
+  "description": "Automated Telegram news bulletin bot",
+  "main": "src/news-cron.js",
   "scripts": {
-    "build": "mkdir -p public && echo 'ok' > public/index.html",
-    "cron": "node scripts/weather-cron.js",
-    "test": "node test/test-weather-logic.js"
+    "news": "node src/news-cron.js"
   },
-  "keywords": [
-    "weather",
-    "cron",
-    "netlify",
-    "scheduled-functions",
-    "telegram",
-    "alerts"
-  ],
-  "author": "Hafiz N24",
-  "license": "MIT",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "puppeteer": "^22.0.0"
-  },
-  "devDependencies": {}
+    "form-data": "^4.0.0"
+  }
 }
