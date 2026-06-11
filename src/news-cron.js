@@ -1,7 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 const FormData = require('form-data');
-const { GoogleGenerativeAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
