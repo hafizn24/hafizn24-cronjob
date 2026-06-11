@@ -1,6 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 const FormData = require('form-data');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
@@ -55,10 +56,10 @@ function httpPostForm(options, form) {
   });
 }
 
-Promise.resolve()
-  .then(() => {
+async function run() {
+  try {
     const gNewsApiKey = process.env.GNEWS_API_KEY;
-    
+
     const topicRequests = [
       {
         hostname: 'gnews.io',
@@ -82,9 +83,8 @@ Promise.resolve()
       }
     ];
 
-    return Promise.all(topicRequests.map(opts => httpGet(opts)));
-  })
-  .then((responses) => {
+    const responses = await Promise.all(topicRequests.map(opts => httpGet(opts)));
+
     const sections = [
       { label: 'GLOBAL NEWS', articles: responses[0].articles || [] },
       { label: 'MALAYSIA NEWS', articles: responses[1].articles || [] },
@@ -105,10 +105,9 @@ Promise.resolve()
 
     console.log('Fetched');
 
-    return newsText;
-  })
-  .then((newsText) => {
     const geminiApiKey = process.env.GEMINI_API_KEY;
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
 
@@ -127,49 +126,17 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    const textReq = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/gemma-4-26b-it:generateContent?key=${geminiApiKey}`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    };
-
-    const voiceReq = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/gemma-4-26b-it:generateContent?key=${geminiApiKey}`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    };
-
-    const textBody = JSON.stringify({
-      contents: [{ parts: [{ text: textPrompt }] }]
-    });
-
-    const voiceBody = JSON.stringify({
-      contents: [{ parts: [{ text: voicePrompt }] }]
-    });
-
-    return Promise.all([
-      httpPost(textReq, textBody),
-      httpPost(voiceReq, voiceBody)
+    const [textResult, voiceResult] = await Promise.all([
+      model.generateContent(textPrompt),
+      model.generateContent(voicePrompt)
     ]);
-  })
-  .then((results) => {
-    const textSummary = results[0].candidates[0].content.parts[0].text;
-    const voiceScript = results[1].candidates[0].content.parts[0].text;
+
+    const textSummary = textResult.response.text();
+    const voiceScript = voiceResult.response.text();
 
     console.log('AI generated');
 
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-
-    const ttsReq = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${geminiApiKey}`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    };
-
-    const ttsBody = JSON.stringify({
+    const ttsResponse = await model.generateContent({
       contents: [{ parts: [{ text: voiceScript }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
@@ -177,16 +144,15 @@ ${newsText}`;
       }
     });
 
-    return httpPost(ttsReq, ttsBody)
-      .then(ttsResponse => {
-        const wavData = ttsResponse.candidates[0].content.parts[0].inlineData.data;
-        const buffer = Buffer.from(wavData, 'base64');
-        fs.writeFileSync('/tmp/news-bulletin.wav', buffer);
-        console.log('TTS done');
-        return textSummary;
-      });
-  })
-  .then((textSummary) => {
+    const audioData = ttsResponse.response.data;
+    if (!audioData) {
+      throw new Error('No audio data in TTS response');
+    }
+
+    const buffer = Buffer.from(audioData, 'base64');
+    fs.writeFileSync('/tmp/news-bulletin.wav', buffer);
+    console.log('TTS done');
+
     const telegramToken = process.env.TELEGRAM_TOKEN;
     const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 
@@ -203,13 +169,8 @@ ${newsText}`;
       parse_mode: 'HTML'
     });
 
-    return httpPost(sendMsgReq, msgBody);
-  })
-  .then(() => {
+    const msgRes = await httpPost(sendMsgReq, msgBody);
     console.log('Text sent');
-
-    const telegramToken = process.env.TELEGRAM_TOKEN;
-    const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 
     const form = new FormData();
     form.append('chat_id', telegramChatId);
@@ -225,12 +186,12 @@ ${newsText}`;
       headers: form.getHeaders()
     };
 
-    return httpPostForm(sendAudioReq, form);
-  })
-  .then(() => {
+    await httpPostForm(sendAudioReq, form);
     console.log('Audio sent');
-  })
-  .catch(err => {
+  } catch (err) {
     console.error(err.message);
     process.exit(1);
-  });
+  }
+}
+
+run();
