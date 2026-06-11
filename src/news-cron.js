@@ -1,7 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 const FormData = require('form-data');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/genai');
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
@@ -107,7 +107,8 @@ async function run() {
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-tts' });
+    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
+    const ttsModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-tts' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
 
@@ -127,8 +128,8 @@ News articles:
 ${newsText}`;
 
     const [textResult, voiceResult] = await Promise.all([
-      model.generateContent(textPrompt),
-      model.generateContent(voicePrompt)
+      textModel.generateContent(textPrompt),
+      textModel.generateContent(voicePrompt)
     ]);
 
     const textSummary = textResult.response.text();
@@ -136,7 +137,7 @@ ${newsText}`;
 
     console.log('AI generated');
 
-    const ttsResponse = await model.generateContent({
+    const ttsResponse = await ttsModel.generateContent({
       contents: [{ parts: [{ text: voiceScript }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
