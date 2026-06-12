@@ -3,9 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Load both target SDK architectures simultaneously
-const { GoogleGenerativeAI } = require('@google/generative-ai'); // Old SDK for Gemma 4
-const { GoogleGenAI } = require('@google/genai');                // New SDK for Multimodal Audio
+// Load the unified GenAI SDK
+const { GoogleGenAI } = require('@google/genai');
 
 /**
  * Native Promise wrapper for HTTPS GET requests
@@ -157,12 +156,8 @@ async function run() {
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY in environment variables.');
 
-    // Initialize both SDK configurations concurrently
-    const legacyGenAI = new GoogleGenerativeAI(geminiApiKey);
-    const modernGenAI = new GoogleGenAI({ apiKey: geminiApiKey });
-
-    // Grab model references using original old SDK binding style
-    const textModel = legacyGenAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
+    // Initialize modern SDK configuration exclusively
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
 
@@ -181,19 +176,20 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    console.log('Generating text scripts using Gemma 4 (Legacy SDK)...');
+    console.log('Generating text scripts using Gemini 2.5 Flash...');
     const [textResult, voiceResult] = await Promise.all([
-      textModel.generateContent(textPrompt),
-      textModel.generateContent(voicePrompt)
+      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: textPrompt }),
+      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: voicePrompt })
     ]);
 
-    const textSummary = textResult.response.text();
-    const voiceScript = voiceResult.response.text();
+    // Extract strings effortlessly using the new SDK standard property directly
+    const textSummary = textResult.text;
+    const voiceScript = voiceResult.text;
 
-    console.log('Gemma 4 generation successful. Synthesizing audio via Modern SDK backend structure...');
+    console.log('Text generation successful. Synthesizing audio via Gemini 2.5 Flash TTS...');
 
-    // Process spoken text scripts into native audio payloads utilizing the modern SDK layout
-    const ttsResponse = await modernGenAI.models.generateContent({
+    // Generate native audio payloads using Gemini 2.5 Flash
+    const ttsResponse = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: voiceScript,
       config: {
@@ -204,12 +200,12 @@ ${newsText}`;
       }
     });
 
-    // Safely pull base64 stream strings out from inside modern nested objects
+    // Safely pull base64 audio bytes out from inside the unified response structure
     const audioPart = ttsResponse.candidates?.[0]?.content?.parts?.[0];
     const audioData = audioPart?.inlineData?.data;
 
     if (!audioData) {
-      throw new Error('No audio data payload extracted from the modern TTS response structure.');
+      throw new Error('No audio data payload extracted from the TTS response.');
     }
 
     const localAudioPath = path.join(__dirname, 'news-bulletin.wav');
