@@ -111,8 +111,8 @@ async function run() {
 
     const genAI = new GoogleGenerativeAI(geminiApiKey);
     
-    // FIX: Using official standard model identifier mapping
-    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-it' });
+    // FIXED: Corrected the registry name identifier mapping for Gemma 4 MoE
+    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
     const ttsModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-tts' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
@@ -152,7 +152,7 @@ ${newsText}`;
       }
     });
 
-    // FIX: Navigating correctly down the candidate parts array to capture the base64 content
+    // Navigating down the candidates parts payload tree array to extract base64
     const audioPart = ttsResponse.response.candidates?.[0]?.content?.parts?.[0];
     const audioData = audioPart?.inlineData?.data;
 
