@@ -59,6 +59,7 @@ function httpPostForm(options, form) {
 async function run() {
   try {
     const gNewsApiKey = process.env.GNEWS_API_KEY;
+    if (!gNewsApiKey) throw new Error('Missing GNEWS_API_KEY');
 
     const topicRequests = [
       {
@@ -103,11 +104,15 @@ async function run() {
       });
     });
 
-    console.log('Fetched');
+    console.log('Fetched news data successfully.');
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY in environment variables.');
+
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
+    
+    // FIX: Using official standard model identifier mapping
+    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-it' });
     const ttsModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-tts' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
@@ -135,28 +140,35 @@ ${newsText}`;
     const textSummary = textResult.response.text();
     const voiceScript = voiceResult.response.text();
 
-    console.log('AI generated');
+    console.log('AI Generation complete.');
 
     const ttsResponse = await ttsModel.generateContent({
       contents: [{ parts: [{ text: voiceScript }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
-        speechConfig: { voiceName: 'Charon' }
+        speechConfig: { voiceName: 'Charon' },
+        speakingRate: 1.0,
+        pitch: 0.0
       }
     });
 
-    const audioData = ttsResponse.response.data;
+    // FIX: Navigating correctly down the candidate parts array to capture the base64 content
+    const audioPart = ttsResponse.response.candidates?.[0]?.content?.parts?.[0];
+    const audioData = audioPart?.inlineData?.data;
+
     if (!audioData) {
-      throw new Error('No audio data in TTS response');
+      throw new Error('No audio data payload extracted from the TTS response structure.');
     }
 
     const buffer = Buffer.from(audioData, 'base64');
     fs.writeFileSync('/tmp/news-bulletin.wav', buffer);
-    console.log('TTS done');
+    console.log('Audio file generated and saved locally.');
 
     const telegramToken = process.env.TELEGRAM_TOKEN;
     const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+    if (!telegramToken || !telegramChatId) throw new Error('Missing Telegram environment variables.');
 
+    // Dispatch text summary
     const sendMsgReq = {
       hostname: 'api.telegram.org',
       path: `/bot${telegramToken}/sendMessage`,
@@ -170,9 +182,10 @@ ${newsText}`;
       parse_mode: 'HTML'
     });
 
-    const msgRes = await httpPost(sendMsgReq, msgBody);
-    console.log('Text sent');
+    await httpPost(sendMsgReq, msgBody);
+    console.log('Telegram message dispatched.');
 
+    // Dispatch audio file
     const form = new FormData();
     form.append('chat_id', telegramChatId);
     form.append('audio', fs.createReadStream('/tmp/news-bulletin.wav'), {
@@ -188,9 +201,10 @@ ${newsText}`;
     };
 
     await httpPostForm(sendAudioReq, form);
-    console.log('Audio sent');
+    console.log('Telegram audio attachment dispatched completely.');
+
   } catch (err) {
-    console.error(err.message);
+    console.error('Execution halted:', err.message);
     process.exit(1);
   }
 }
