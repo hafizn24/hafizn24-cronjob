@@ -227,10 +227,10 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    console.log('Generating text and voice scripts via Gemma 4...');
+    console.log('Generating text and voice scripts via Gemini-2.5-flash...');
     const [textResult, voiceResult] = await Promise.all([
-      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: textPrompt }),
-      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: voicePrompt })
+      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: textPrompt }),
+      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: voicePrompt })
     ]);
 
     const textSummary = textResult.text;
