@@ -5,6 +5,8 @@ const crypto = require('crypto');
 
 // Load the unified GenAI SDK
 const { GoogleGenAI } = require('@google/genai');
+// Load local TTS engine to keep free tier requests operational
+const gTTS = require('gtts');
 
 /**
  * Native Promise wrapper for HTTPS GET requests
@@ -55,7 +57,6 @@ function sendTelegramAudio(token, chatId, filePath) {
     const boundary = `----NodeFormBoundary${crypto.randomBytes(16).toString('hex')}`;
     const filename = path.basename(filePath);
     
-    // Construct HTTP headers
     const options = {
       hostname: 'api.telegram.org',
       path: `/bot${token}/sendAudio`,
@@ -79,15 +80,13 @@ function sendTelegramAudio(token, chatId, filePath) {
 
     req.on('error', reject);
 
-    // Build Form Content Elements manually in memory safely
     req.write(`--${boundary}\r\n`);
     req.write(`Content-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`);
 
     req.write(`--${boundary}\r\n`);
     req.write(`Content-Disposition: form-data; name="audio"; filename="${filename}"\r\n`);
-    req.write(`Content-Type: audio/wav\r\n\r\n`);
+    req.write(`Content-Type: audio/mpeg\r\n\r\n`); // Adjusted to mpeg for gtts compatibility
 
-    // Stream out binary content blocks directly
     const fileStream = fs.createReadStream(filePath);
     fileStream.on('data', (chunk) => req.write(chunk));
     fileStream.on('end', () => {
@@ -106,7 +105,6 @@ async function run() {
     const gNewsApiKey = process.env.GNEWS_API_KEY;
     if (!gNewsApiKey) throw new Error('Missing GNEWS_API_KEY');
 
-    // Prepare API requests targeting GNews API points
     const topicRequests = [
       {
         hostname: 'gnews.io',
@@ -182,35 +180,23 @@ ${newsText}`;
       ai.models.generateContent({ model: 'gemini-2.5-flash', contents: voicePrompt })
     ]);
 
-    // Extract strings effortlessly using the new SDK standard property directly
     const textSummary = textResult.text;
     const voiceScript = voiceResult.text;
 
-    console.log('Text generation successful. Synthesizing audio via Gemini 2.5 Flash TTS...');
+    console.log('Text generation successful. Synthesizing audio via local gTTS Engine...');
 
-    // Generate native audio payloads using the correct specialized TTS model
-    const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-tts',
-      contents: voiceScript,
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
-        }
-      }
+    const localAudioPath = path.join(__dirname, 'news-bulletin.mp3');
+    
+    // Synthesize the audio locally using Google Text-to-Speech to guarantee 100% free-tier reliability
+    await new Promise((resolve, reject) => {
+      const tts = new gTTS(voiceScript, 'en');
+      tts.save(localAudioPath, (err) => {
+        if (err) return reject(err);
+        resolve();
+      });
     });
-
-    // Safely pull base64 audio bytes out from inside the unified response structure
-    const audioPart = ttsResponse.candidates?.[0]?.content?.parts?.[0];
-    const audioData = audioPart?.inlineData?.data;
-
-    if (!audioData) {
-      throw new Error('No audio data payload extracted from the TTS response.');
-    }
-
-    const localAudioPath = path.join(__dirname, 'news-bulletin.wav');
-    fs.writeFileSync(localAudioPath, Buffer.from(audioData, 'base64'));
-    console.log(`Audio binary written smoothly out to: ${localAudioPath}`);
+    
+    console.log(`Audio binary written smoothly out to local space: ${localAudioPath}`);
 
     const telegramToken = process.env.TELEGRAM_TOKEN;
     const telegramChatId = process.env.TELEGRAM_CHAT_ID;
