@@ -2,6 +2,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { XMLParser } = require('fast-xml-parser');
 
 const { GoogleGenAI } = require('@google/genai');
 const gTTS = require('gtts');
@@ -12,8 +13,7 @@ function httpGet(options) {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`Parse error: ${e.message}`)); }
+        resolve(data);
       });
     }).on('error', reject);
   });
@@ -32,6 +32,29 @@ function httpPost(options, body) {
     req.on('error', reject);
     req.write(body);
     req.end();
+  });
+}
+
+function parseRSS(xmlData) {
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
+  const parsed = parser.parse(xmlData);
+  
+  const items = parsed.rss?.channel?.item || [];
+  const itemsArray = Array.isArray(items) ? items : [items];
+  
+  return itemsArray.slice(0, 3).map(item => {
+    let source = item.source;
+    if (typeof source === 'object' && source['#text']) {
+      source = source['#text'];
+    }
+    
+    return {
+      title: item.title || 'N/A',
+      url: item.link || 'N/A',
+      description: 'N/A',
+      source: source || 'Google News',
+      publishedAt: item.pubDate || 'N/A'
+    };
   });
 }
 
@@ -88,40 +111,23 @@ function getMYTDateTime() {
 
 async function run() {
   try {
-    const gNewsApiKey = process.env.GNEWS_API_KEY;
-    if (!gNewsApiKey) throw new Error('Missing GNEWS_API_KEY');
-
-    const topicRequests = [
-      {
-        hostname: 'gnews.io',
-        path: `/api/v4/top-headlines?topic=world&lang=en&country=any&max=3&apikey=${gNewsApiKey}`,
-        method: 'GET'
-      },
-      {
-        hostname: 'gnews.io',
-        path: `/api/v4/search?q=Malaysia&lang=en&country=my&sortby=publishedAt&max=3&apikey=${gNewsApiKey}`,
-        method: 'GET'
-      },
-      {
-        hostname: 'gnews.io',
-        path: `/api/v4/search?q=football+OR+soccer+OR+Premier+League+OR+Champions+League+OR+La+Liga+OR+FIFA&lang=en&country=any&sortby=publishedAt&max=3&apikey=${gNewsApiKey}`,
-        method: 'GET'
-      },
-      {
-        hostname: 'gnews.io',
-        path: `/api/v4/top-headlines?topic=business&lang=en&country=any&max=3&apikey=${gNewsApiKey}`,
-        method: 'GET'
-      }
+    const rssUrls = [
+      { hostname: 'news.google.com', path: '/rss/headlines/section/topic/WORLD?hl=en&gl=US&ceid=US:en', method: 'GET' },
+      { hostname: 'news.google.com', path: '/rss/search?q=Malaysia&hl=en-MY&gl=MY&ceid=MY:en', method: 'GET' },
+      { hostname: 'news.google.com', path: '/rss/search?q=football+OR+soccer+OR+Premier+League+OR+Champions+League&hl=en&gl=US&ceid=US:en', method: 'GET' },
+      { hostname: 'news.google.com', path: '/rss/headlines/section/topic/BUSINESS?hl=en&gl=US&ceid=US:en', method: 'GET' }
     ];
 
     console.log('Fetching news feed datasets...');
-    const responses = await Promise.all(topicRequests.map(opts => httpGet(opts)));
+    const responses = await Promise.all(rssUrls.map(opts => httpGet(opts)));
+    
+    const parsedFeeds = responses.map(xml => parseRSS(xml));
 
     const sections = [
-      { label: 'GLOBAL',   emoji: '🌍', articles: responses[0].articles || [] },
-      { label: 'MALAYSIA', emoji: '🇲🇾', articles: responses[1].articles || [] },
-      { label: 'FOOTBALL', emoji: '⚽', articles: responses[2].articles || [] },
-      { label: 'ECONOMIC', emoji: '📈', articles: responses[3].articles || [] }
+      { label: 'GLOBAL',   emoji: '🌍', articles: parsedFeeds[0] },
+      { label: 'MALAYSIA', emoji: '🇲🇾', articles: parsedFeeds[1] },
+      { label: 'FOOTBALL', emoji: '⚽', articles: parsedFeeds[2] },
+      { label: 'ECONOMIC', emoji: '📈', articles: parsedFeeds[3] }
     ];
 
     let newsText = '';
@@ -130,7 +136,7 @@ async function run() {
       section.articles.slice(0, 3).forEach((article, i) => {
         newsText += `${i + 1}. Title: ${article.title}\n`;
         newsText += `   Description: ${article.description || 'N/A'}\n`;
-        newsText += `   Source: ${article.source.name}\n`;
+        newsText += `   Source: ${article.source}\n`;
         newsText += `   URL: ${article.url}\n`;
         newsText += `   Published: ${article.publishedAt}\n\n`;
       });
@@ -221,10 +227,10 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    console.log('Generating text and voice scripts via Gemini 2.5 Flash...');
+    console.log('Generating text and voice scripts via Gemma 4...');
     const [textResult, voiceResult] = await Promise.all([
-      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: textPrompt }),
-      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: voicePrompt })
+      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: textPrompt }),
+      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: voicePrompt })
     ]);
 
     const textSummary = textResult.text;
