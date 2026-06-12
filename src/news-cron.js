@@ -1,11 +1,15 @@
 const https = require('https');
 const fs = require('fs');
-const FormData = require('form-data');
+const path = require('path');
+const crypto = require('crypto');
 
-// Import BOTH the legacy and the modern Google SDK architectures
-const { GoogleGenerativeAI } = require('@google/generative-ai'); // Old SDK
-const { GoogleGenAI } = require('@google/genai');                // New SDK
+// Load both target SDK architectures simultaneously
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // Old SDK for Gemma 4
+const { GoogleGenAI } = require('@google/genai');                // New SDK for Multimodal Audio
 
+/**
+ * Native Promise wrapper for HTTPS GET requests
+ */
 function httpGet(options) {
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
@@ -22,6 +26,9 @@ function httpGet(options) {
   });
 }
 
+/**
+ * Native Promise wrapper for standard HTTPS POST requests (JSON payloads)
+ */
 function httpPost(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
@@ -41,8 +48,24 @@ function httpPost(options, body) {
   });
 }
 
-function httpPostForm(options, form) {
+/**
+ * Sends a local file binary to Telegram Bot API using a raw Multipart FormData implementation
+ */
+function sendTelegramAudio(token, chatId, filePath) {
   return new Promise((resolve, reject) => {
+    const boundary = `----NodeFormBoundary${crypto.randomBytes(16).toString('hex')}`;
+    const filename = path.basename(filePath);
+    
+    // Construct HTTP headers
+    const options = {
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/sendAudio`,
+      method: 'POST',
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`
+      }
+    };
+
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -50,12 +73,32 @@ function httpPostForm(options, form) {
         try {
           resolve(JSON.parse(data));
         } catch (e) {
-          reject(new Error(`Parse error: ${e.message}`));
+          reject(new Error(`Telegram JSON parse error: ${e.message}`));
         }
       });
     });
+
     req.on('error', reject);
-    form.pipe(req);
+
+    // Build Form Content Elements manually in memory safely
+    req.write(`--${boundary}\r\n`);
+    req.write(`Content-Disposition: form-data; name="chat_id"\r\n\r\n${chatId}\r\n`);
+
+    req.write(`--${boundary}\r\n`);
+    req.write(`Content-Disposition: form-data; name="audio"; filename="${filename}"\r\n`);
+    req.write(`Content-Type: audio/wav\r\n\r\n`);
+
+    // Stream out binary content blocks directly
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.on('data', (chunk) => req.write(chunk));
+    fileStream.on('end', () => {
+      req.write(`\r\n--${boundary}--\r\n`);
+      req.end();
+    });
+    fileStream.on('error', (err) => {
+      req.destroy();
+      reject(err);
+    });
   });
 }
 
@@ -64,6 +107,7 @@ async function run() {
     const gNewsApiKey = process.env.GNEWS_API_KEY;
     if (!gNewsApiKey) throw new Error('Missing GNEWS_API_KEY');
 
+    // Prepare API requests targeting GNews API points
     const topicRequests = [
       {
         hostname: 'gnews.io',
@@ -87,6 +131,7 @@ async function run() {
       }
     ];
 
+    console.log('Fetching news feed datasets...');
     const responses = await Promise.all(topicRequests.map(opts => httpGet(opts)));
 
     const sections = [
@@ -112,11 +157,11 @@ async function run() {
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY in environment variables.');
 
-    // --- INITIALIZE BOTH SDK VERSIONS ---
-    const legacyGenAI = new GoogleGenerativeAI(geminiApiKey); // Old client used for Gemma 4
-    const modernGenAI = new GoogleGenAI({ apiKey: geminiApiKey }); // New client used for TTS audio
+    // Initialize both SDK configurations concurrently
+    const legacyGenAI = new GoogleGenerativeAI(geminiApiKey);
+    const modernGenAI = new GoogleGenAI({ apiKey: geminiApiKey });
 
-    // Instantiate Gemma 4 using the legacy registry object method
+    // Grab model references using original old SDK binding style
     const textModel = legacyGenAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
@@ -136,9 +181,7 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    console.log('Generating scripts with Gemma 4 using legacy SDK connection layout...');
-
-    // Run generations concurrently using old SDK instance methods
+    console.log('Generating text scripts using Gemma 4 (Legacy SDK)...');
     const [textResult, voiceResult] = await Promise.all([
       textModel.generateContent(textPrompt),
       textModel.generateContent(voicePrompt)
@@ -147,9 +190,9 @@ ${newsText}`;
     const textSummary = textResult.response.text();
     const voiceScript = voiceResult.response.text();
 
-    console.log('Gemma 4 text outputs complete. Processing Voice synthesis via Modern SDK structure...');
+    console.log('Gemma 4 generation successful. Synthesizing audio via Modern SDK backend structure...');
 
-    // Native generation layout using the official production multimodal model layout 
+    // Process spoken text scripts into native audio payloads utilizing the modern SDK layout
     const ttsResponse = await modernGenAI.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: voiceScript,
@@ -161,23 +204,24 @@ ${newsText}`;
       }
     });
 
-    // Extracting out the inline base64 data stream buffer properties via new payload architecture
+    // Safely pull base64 stream strings out from inside modern nested objects
     const audioPart = ttsResponse.candidates?.[0]?.content?.parts?.[0];
     const audioData = audioPart?.inlineData?.data;
 
     if (!audioData) {
-      throw new Error('No audio data payload extracted from the TTS response structure.');
+      throw new Error('No audio data payload extracted from the modern TTS response structure.');
     }
 
-    const buffer = Buffer.from(audioData, 'base64');
-    fs.writeFileSync('/tmp/news-bulletin.wav', buffer);
-    console.log('Audio file generated and saved locally.');
+    const localAudioPath = path.join(__dirname, 'news-bulletin.wav');
+    fs.writeFileSync(localAudioPath, Buffer.from(audioData, 'base64'));
+    console.log(`Audio binary written smoothly out to: ${localAudioPath}`);
 
     const telegramToken = process.env.TELEGRAM_TOKEN;
     const telegramChatId = process.env.TELEGRAM_CHAT_ID;
-    if (!telegramToken || !telegramChatId) throw new Error('Missing Telegram environment variables.');
+    if (!telegramToken || !telegramChatId) throw new Error('Missing Telegram configuration tokens.');
 
-    // Dispatch text summary
+    // Dispatch the text bulletin to Telegram
+    console.log('Sending HTML news summary to Telegram...');
     const sendMsgReq = {
       hostname: 'api.telegram.org',
       path: `/bot${telegramToken}/sendMessage`,
@@ -192,28 +236,15 @@ ${newsText}`;
     });
 
     await httpPost(sendMsgReq, msgBody);
-    console.log('Telegram message dispatched.');
+    console.log('Telegram HTML text message dispatched safely.');
 
-    // Dispatch audio file
-    const form = new FormData();
-    form.append('chat_id', telegramChatId);
-    form.append('audio', fs.createReadStream('/tmp/news-bulletin.wav'), {
-      filename: 'news-bulletin.wav',
-      contentType: 'audio/wav'
-    });
-
-    const sendAudioReq = {
-      hostname: 'api.telegram.org',
-      path: `/bot${telegramToken}/sendAudio`,
-      method: 'POST',
-      headers: form.getHeaders()
-    };
-
-    await httpPostForm(sendAudioReq, form);
-    console.log('Telegram audio attachment dispatched completely.');
+    // Dispatch the audio file attachment to Telegram using native multipart handling
+    console.log('Uploading generated audio file stream...');
+    await sendTelegramAudio(telegramToken, telegramChatId, localAudioPath);
+    console.log('Telegram process completed completely.');
 
   } catch (err) {
-    console.error('Execution halted:', err.message);
+    console.error('Execution halted unexpectedly:', err.message);
     process.exit(1);
   }
 }
