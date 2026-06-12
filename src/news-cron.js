@@ -1,7 +1,8 @@
 const https = require('https');
 const fs = require('fs');
 const FormData = require('form-data');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+// Upgraded SDK Import
+const { GoogleGenAI } = require('@google/genai');
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
@@ -107,13 +108,10 @@ async function run() {
     console.log('Fetched news data successfully.');
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY in environment variables.');
+    if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY');
 
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    
-    // FIXED: Corrected the registry name identifier mapping for Gemma 4 MoE
-    const textModel = genAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
-    const ttsModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-tts' });
+    // Initialize with the new Client SDK pattern
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
 
@@ -132,32 +130,46 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
+    console.log('Generating textual copy & scripts using Gemma 4 MoE...');
     const [textResult, voiceResult] = await Promise.all([
-      textModel.generateContent(textPrompt),
-      textModel.generateContent(voicePrompt)
+      ai.models.generateContent({
+        model: 'gemma-4-26b-a4b-it',
+        contents: textPrompt,
+      }),
+      ai.models.generateContent({
+        model: 'gemma-4-26b-a4b-it',
+        contents: voicePrompt,
+      })
     ]);
 
-    const textSummary = textResult.response.text();
-    const voiceScript = voiceResult.response.text();
+    // Flat text properties from the new SDK response wrapper
+    const textSummary = textResult.text;
+    const voiceScript = voiceResult.text;
 
     console.log('AI Generation complete.');
 
-    const ttsResponse = await ttsModel.generateContent({
-      contents: [{ parts: [{ text: voiceScript }] }],
-      generationConfig: {
+    // Upgraded TTS configurations block mapping
+    const ttsResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-tts',
+      contents: voiceScript,
+      config: {
         responseModalities: ['AUDIO'],
-        speechConfig: { voiceName: 'Charon' },
-        speakingRate: 1.0,
-        pitch: 0.0
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: 'Charon'
+            }
+          }
+        }
       }
     });
 
-    // Navigating down the candidates parts payload tree array to extract base64
-    const audioPart = ttsResponse.response.candidates?.[0]?.content?.parts?.[0];
+    // Flattened structural properties access from the new root object response
+    const audioPart = ttsResponse.candidates?.[0]?.content?.parts?.[0];
     const audioData = audioPart?.inlineData?.data;
 
     if (!audioData) {
-      throw new Error('No audio data payload extracted from the TTS response structure.');
+      throw new Error('No audio inlineData payload extracted from the TTS response structure.');
     }
 
     const buffer = Buffer.from(audioData, 'base64');
