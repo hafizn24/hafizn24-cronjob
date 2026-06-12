@@ -178,7 +178,7 @@ async function run() {
     const RSS_URLS = [
       'https://news.google.com/rss/headlines/section/topic/WORLD?hl=en&gl=US&ceid=US:en',
       'https://news.google.com/rss/search?q=Malaysia&hl=en-MY&gl=MY&ceid=MY:en',
-      'https://news.google.com/rss/search?q=football+OR+soccer+OR+Premier+League+OR+Champions+League&hl=en&gl=US&ceid=US:en',
+      'https://news.google.com/rss/search?q=football+OR+soccer+OR+FIFA&hl=en&gl=US&ceid=US:en',
       'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en&gl=US&ceid=US:en'
     ];
 
