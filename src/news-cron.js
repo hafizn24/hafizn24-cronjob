@@ -188,9 +188,9 @@ ${newsText}`;
 
     console.log('Text generation successful. Synthesizing audio via Gemini 2.5 Flash TTS...');
 
-    // Generate native audio payloads using Gemini 2.5 Flash
+    // Generate native audio payloads using the correct specialized TTS model
     const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-tts',
       contents: voiceScript,
       config: {
         responseModalities: ['AUDIO'],
