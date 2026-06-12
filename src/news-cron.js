@@ -1,8 +1,10 @@
 const https = require('https');
 const fs = require('fs');
 const FormData = require('form-data');
-// Upgraded SDK Import
-const { GoogleGenAI } = require('@google/genai');
+
+// Import BOTH the legacy and the modern Google SDK architectures
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // Old SDK
+const { GoogleGenAI } = require('@google/genai');                // New SDK
 
 function httpGet(options) {
   return new Promise((resolve, reject) => {
@@ -108,10 +110,14 @@ async function run() {
     console.log('Fetched news data successfully.');
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY');
+    if (!geminiApiKey) throw new Error('Missing GEMINI_API_KEY in environment variables.');
 
-    // Initialize with the new Client SDK pattern
-    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+    // --- INITIALIZE BOTH SDK VERSIONS ---
+    const legacyGenAI = new GoogleGenerativeAI(geminiApiKey); // Old client used for Gemma 4
+    const modernGenAI = new GoogleGenAI({ apiKey: geminiApiKey }); // New client used for TTS audio
+
+    // Instantiate Gemma 4 using the legacy registry object method
+    const textModel = legacyGenAI.getGenerativeModel({ model: 'gemma-4-26b-a4b-it' });
 
     const textPrompt = `You are a professional news editor. Based on the following news articles, create a Telegram HTML formatted bulletin using <b>, <i>, and emojis. Use numbered lists. Length: 350-450 words.
 
@@ -130,46 +136,37 @@ Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until 
 News articles:
 ${newsText}`;
 
-    console.log('Generating textual copy & scripts using Gemma 4 MoE...');
+    console.log('Generating scripts with Gemma 4 using legacy SDK connection layout...');
+
+    // Run generations concurrently using old SDK instance methods
     const [textResult, voiceResult] = await Promise.all([
-      ai.models.generateContent({
-        model: 'gemma-4-26b-a4b-it',
-        contents: textPrompt,
-      }),
-      ai.models.generateContent({
-        model: 'gemma-4-26b-a4b-it',
-        contents: voicePrompt,
-      })
+      textModel.generateContent(textPrompt),
+      textModel.generateContent(voicePrompt)
     ]);
 
-    // Flat text properties from the new SDK response wrapper
-    const textSummary = textResult.text;
-    const voiceScript = voiceResult.text;
+    const textSummary = textResult.response.text();
+    const voiceScript = voiceResult.response.text();
 
-    console.log('AI Generation complete.');
+    console.log('Gemma 4 text outputs complete. Processing Voice synthesis via Modern SDK structure...');
 
-    // Upgraded TTS configurations block mapping
-    const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-tts',
+    // Native generation layout using the official production multimodal model layout 
+    const ttsResponse = await modernGenAI.models.generateContent({
+      model: 'gemini-2.5-flash',
       contents: voiceScript,
       config: {
         responseModalities: ['AUDIO'],
         speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: 'Charon'
-            }
-          }
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
         }
       }
     });
 
-    // Flattened structural properties access from the new root object response
+    // Extracting out the inline base64 data stream buffer properties via new payload architecture
     const audioPart = ttsResponse.candidates?.[0]?.content?.parts?.[0];
     const audioData = audioPart?.inlineData?.data;
 
     if (!audioData) {
-      throw new Error('No audio inlineData payload extracted from the TTS response structure.');
+      throw new Error('No audio data payload extracted from the TTS response structure.');
     }
 
     const buffer = Buffer.from(audioData, 'base64');
