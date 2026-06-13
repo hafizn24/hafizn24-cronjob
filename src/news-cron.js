@@ -194,6 +194,19 @@ function getMYTDateTime() {
   }).replace(',', ' ·') + ' MYT';
 }
 
+async function fetchWithRetry(options, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const result = await httpGetWithOptions(options);
+      if (result && result.articles && result.articles.length > 0) return result;
+    } catch (err) {
+      console.warn(`Attempt ${i + 1} failed:`, err.message);
+    }
+    if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+  }
+  return { articles: [] };
+}
+
 async function run() {
   try {
     initLog();
@@ -271,7 +284,7 @@ async function run() {
       console.log(`Fetching GNews fallback for ${sectionsNeedingFallback.length} section(s)...`);
       
       const fallbackPromises = sectionsNeedingFallback.map(({ section, index }) =>
-        httpGetWithOptions(gNewsRequests[index])
+        fetchWithRetry(gNewsRequests[index])
           .then(response => {
             const gNewsArticles = parseGNews(response);
             sections[index].articles = gNewsArticles;
