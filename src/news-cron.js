@@ -40,6 +40,19 @@ function httpGet(url) {
   });
 }
 
+function httpGetWithOptions(options) {
+  return new Promise((resolve, reject) => {
+    https.get(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`Parse error: ${e.message}`)); }
+      });
+    }).on('error', reject);
+  });
+}
+
 function httpPost(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
@@ -77,6 +90,17 @@ function parseRSS(xmlData) {
       publishedAt: item.pubDate     || 'N/A'
     };
   });
+}
+
+function parseGNews(response) {
+  const articles = response.articles || [];
+  return articles.slice(0, 3).map(article => ({
+    title:       article.title       || 'N/A',
+    url:         article.url         || 'N/A',
+    description: article.description || 'N/A',
+    source:      article.source?.name || 'GNews',
+    publishedAt: article.publishedAt || 'N/A'
+  }));
 }
 
 function sendTelegramDocument(token, chatId, filePath, caption) {
@@ -212,17 +236,72 @@ async function run() {
       }))
     })));
 
+    // ── STEP 2b: GNews Fallback ───────────────────────────────────────────────
+    const sectionsNeedingFallback = sections
+      .map((s, idx) => ({ section: s, index: idx }))
+      .filter(({ section }) => section.articles.length === 0);
+
+    if (sectionsNeedingFallback.length > 0) {
+      const gNewsApiKey = process.env.GNEWS_API_KEY;
+      if (!gNewsApiKey) throw new Error('Missing GNEWS_API_KEY');
+
+      const gNewsRequests = [
+        {
+          hostname: 'gnews.io',
+          path: `/api/v4/top-headlines?topic=world&lang=en&country=any&max=3&apikey=${gNewsApiKey}`,
+          method: 'GET'
+        },
+        {
+          hostname: 'gnews.io',
+          path: `/api/v4/search?q=Malaysia&lang=en&country=my&sortby=publishedAt&max=3&apikey=${gNewsApiKey}`,
+          method: 'GET'
+        },
+        {
+          hostname: 'gnews.io',
+          path: `/api/v4/search?q=football+OR+soccer+OR+Premier+League+OR+Champions+League+OR+La+Liga+OR+FIFA&lang=en&country=any&sortby=publishedAt&max=3&apikey=${gNewsApiKey}`,
+          method: 'GET'
+        },
+        {
+          hostname: 'gnews.io',
+          path: `/api/v4/top-headlines?topic=business&lang=en&country=any&max=3&apikey=${gNewsApiKey}`,
+          method: 'GET'
+        }
+      ];
+
+      console.log(`Fetching GNews fallback for ${sectionsNeedingFallback.length} section(s)...`);
+      
+      const fallbackPromises = sectionsNeedingFallback.map(({ section, index }) =>
+        httpGetWithOptions(gNewsRequests[index])
+          .then(response => {
+            const gNewsArticles = parseGNews(response);
+            sections[index].articles = gNewsArticles;
+            return { label: section.label, articles: gNewsArticles };
+          })
+          .catch(err => {
+            console.warn(`GNews fallback failed for ${section.label}:`, err.message);
+            return { label: section.label, articles: [], error: err.message };
+          })
+      );
+
+      const gNewsResults = await Promise.all(fallbackPromises);
+      log('STEP 2b — GNEWS FALLBACK', gNewsResults);
+    }
+
     // ── STEP 3: Build newsText ────────────────────────────────────────────────
     let newsText = '';
     sections.forEach(section => {
       newsText += `\n[${section.label}]\n`;
-      section.articles.slice(0, 3).forEach((article, i) => {
-        newsText += `${i + 1}. Title: ${article.title}\n`;
-        newsText += `   Description: ${article.description || 'N/A'}\n`;
-        newsText += `   Source: ${article.source}\n`;
-        newsText += `   URL: ${article.url}\n`;
-        newsText += `   Published: ${article.publishedAt}\n\n`;
-      });
+      if (section.articles.length === 0) {
+        newsText += `${section.label} — NO ARTICLES AVAILABLE\n`;
+      } else {
+        section.articles.slice(0, 3).forEach((article, i) => {
+          newsText += `${i + 1}. Title: ${article.title}\n`;
+          newsText += `   Description: ${article.description || 'N/A'}\n`;
+          newsText += `   Source: ${article.source}\n`;
+          newsText += `   URL: ${article.url}\n`;
+          newsText += `   Published: ${article.publishedAt}\n\n`;
+        });
+      }
     });
 
     log('STEP 3 — NEWS TEXT SENT TO GEMINI', newsText);
@@ -242,7 +321,7 @@ STRICT RULES:
 - Use \\n for line breaks. Never use <br>, <hr>, <ul>, <li>, or any other tags.
 - Output the bulletin as a single plain text string with \\n line breaks and the allowed HTML tags only.
 - Do NOT wrap the output in any code block or quotes.
-- Include ALL 12 articles across all 4 sections (3 per section). Do not skip any.
+- Include up to 3 articles per section. For any section with no articles, write "No articles available for this section." Do NOT invent, fabricate, or assume any news.
 - For each article: write a bold headline, then 1-2 sentences of plain description, then the source as a clickable link.
 - Use the exact article URL provided for the source link.
 
@@ -300,6 +379,8 @@ Cover ALL 12 articles across all 4 sections. Use these transitions:
 - After football: "And on the economic front..."
 
 For each article spend 2-4 sentences: state what happened, why it matters, and any key detail.
+
+If a section has no articles, state "No articles available for this section." Do NOT invent, fabricate, or assume any news.
 
 Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until next time."
 
