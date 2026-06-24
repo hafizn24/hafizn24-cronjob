@@ -58,7 +58,9 @@ const TARGET_PRICE = 600.00;
 
 async function getZaloraPrice() {
   try {
+    console.log(`Fetching URL: ${ZALORA_URL}`);
     const html = await httpGet(ZALORA_URL);
+    console.log(`HTML received. Length: ${html.length} chars`);
 
     // 1. Try to find meta description
     const metaMatch = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
@@ -66,11 +68,13 @@ async function getZaloraPrice() {
 
     if (metaMatch && metaMatch[1]) {
       content = metaMatch[1];
+      console.log(`Meta description found.`);
     } else {
       // 2. Fallback to og:description
       const ogMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
       if (ogMatch && ogMatch[1]) {
         content = ogMatch[1];
+        console.log(`OG description found (fallback).`);
       }
     }
 
@@ -78,8 +82,11 @@ async function getZaloraPrice() {
       // 3. Parse "NOW only 740.00"
       const priceMatch = content.match(/NOW only ([\d.]+)/);
       if (priceMatch) {
-        return parseFloat(priceMatch[1]);
+        const price = parseFloat(priceMatch[1]);
+        console.log(`Price extracted: RM ${price}`);
+        return price;
       }
+      console.log('Price pattern not found in content.');
       return null;
     }
     return null;
@@ -105,6 +112,8 @@ async function sendTelegramAlert(token, chatId, productName, price, productUrl) 
 
   // Add the link to the message
   message += `\n\nProduct Link: ${productUrl}`;
+
+  console.log(`Sending Telegram message: ${message}`);
 
   await httpPost(
     {
