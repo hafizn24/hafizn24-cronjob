@@ -27,11 +27,39 @@ function log(label, data) {
 
 function httpGet(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const parsed = new URL(url);
+    const options = {
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-MY,en;q=0.9',
+        'Accept-Encoding': 'identity',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      // Follow redirects
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+        const location = res.headers.location;
+        if (!location) return reject(new Error('Redirect with no location header'));
+        const redirectUrl = location.startsWith('http') ? location : `https://${parsed.hostname}${location}`;
+        console.log(`Redirecting to: ${redirectUrl}`);
+        return resolve(httpGet(redirectUrl));
+      }
+
+      console.log(`Response status: ${res.statusCode}`);
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => resolve(data));
-    }).on('error', reject);
+    });
+
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -62,19 +90,26 @@ async function getZaloraPrice() {
     const html = await httpGet(ZALORA_URL);
     console.log(`HTML received. Length: ${html.length} chars`);
 
-    // 1. Try to find meta description
+    // Log a snippet to help debug if price extraction fails
+    if (html.length < 5000) {
+      console.log('--- HTML SNIPPET (first 2000 chars) ---');
+      console.log(html.substring(0, 2000));
+      console.log('--- END SNIPPET ---');
+    }
+
+    // 1. Try meta description
     const metaMatch = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
     let content = null;
 
     if (metaMatch && metaMatch[1]) {
       content = metaMatch[1];
-      console.log(`Meta description found.`);
+      console.log(`Meta description found: ${content}`);
     } else {
       // 2. Fallback to og:description
       const ogMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i);
       if (ogMatch && ogMatch[1]) {
         content = ogMatch[1];
-        console.log(`OG description found (fallback).`);
+        console.log(`OG description found (fallback): ${content}`);
       }
     }
 
@@ -86,10 +121,25 @@ async function getZaloraPrice() {
         console.log(`Price extracted: RM ${price}`);
         return price;
       }
-      console.log('Price pattern not found in content.');
-      return null;
+
+      // 4. Broader fallback: any RM price pattern in the full HTML
+      console.log('Price pattern not found in meta/og description. Trying full HTML fallback...');
     }
+
+    // 5. Last resort: scan full HTML for price patterns
+    const htmlPriceMatch = html.match(/["']price["']\s*:\s*["']([\d.]+)["']/i)
+      || html.match(/RM\s*([\d,]+\.?\d*)/i)
+      || html.match(/NOW only ([\d.]+)/i);
+
+    if (htmlPriceMatch) {
+      const price = parseFloat(htmlPriceMatch[1].replace(',', ''));
+      console.log(`Price extracted from HTML fallback: RM ${price}`);
+      return price;
+    }
+
+    console.log('Price extraction failed — no pattern matched.');
     return null;
+
   } catch (err) {
     console.error('Error fetching Zalora price:', err.message);
     return null;
@@ -97,25 +147,21 @@ async function getZaloraPrice() {
 }
 
 function getProductName() {
-  // Fallback logic similar to Python script
   return "HABIB 1g Gold Bar";
 }
 
 async function sendTelegramAlert(token, chatId, productName, price, productUrl) {
-  // Construct the base message
   let message = `🚨 PRICE ALERT: ${productName} is currently RM ${price.toFixed(2)}.`;
 
-  // Add "Buy Now!" if price is below target
   if (price <= TARGET_PRICE) {
-    message += "\n\nBuy Now!";
+    message += "\n\n🟢 Buy Now! Price is at or below your target!";
   }
 
-  // Add the link to the message
-  message += `\n\nProduct Link: ${productUrl}`;
+  message += `\n\n🔗 Product Link: ${productUrl}`;
 
   console.log(`Sending Telegram message: ${message}`);
 
-  await httpPost(
+  const result = await httpPost(
     {
       hostname: 'api.telegram.org',
       path: `/bot${token}/sendMessage`,
@@ -128,6 +174,12 @@ async function sendTelegramAlert(token, chatId, productName, price, productUrl) 
       parse_mode: 'HTML'
     })
   );
+
+  if (!result.ok) {
+    throw new Error(`Telegram API error: ${JSON.stringify(result)}`);
+  }
+
+  return result;
 }
 
 async function run() {
@@ -137,29 +189,26 @@ async function run() {
 
     const price = await getZaloraPrice();
     const productName = getProductName();
-    const timestamp = new Date().toISOString();
 
     if (price === null) {
       log('ERROR', { message: 'Failed to extract price from Zalora' });
       throw new Error('Price extraction failed');
     }
 
-    log('PRICE CHECK', { product: productName, price: price.toFixed(2) });
+    log('PRICE CHECK', { product: productName, price: price.toFixed(2), target: TARGET_PRICE.toFixed(2) });
 
-    // ALERT LOGIC (Always runs now, regardless of price)
-    try {
-      const telegramToken = process.env.TELEGRAM_TOKEN;
-      const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+    const telegramToken = process.env.TELEGRAM_TOKEN;
+    const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 
-      if (telegramToken && telegramChatId) {
-        // Pass ZALORA_URL as the last argument
+    if (telegramToken && telegramChatId) {
+      try {
         await sendTelegramAlert(telegramToken, telegramChatId, productName, price, ZALORA_URL);
         log('TELEGRAM ALERT SENT', { success: true });
-      } else {
-        log('CONFIG ERROR', { message: 'Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID' });
+      } catch (err) {
+        log('TELEGRAM ERROR', { message: err.message });
       }
-    } catch (err) {
-      log('TELEGRAM ERROR', { message: err.message });
+    } else {
+      log('CONFIG ERROR', { message: 'Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID env vars' });
     }
 
     log('RUN COMPLETE', { finishedAt: new Date().toISOString() });
