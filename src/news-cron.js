@@ -402,8 +402,8 @@ ${newsText}`;
 
     console.log('Generating text and voice scripts via Gemini 2.5 Flash...');
     const [textResult, voiceResult] = await Promise.all([
-      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: textPrompt }),
-      ai.models.generateContent({ model: 'gemini-2.5-flash', contents: voicePrompt })
+      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: textPrompt }),
+      ai.models.generateContent({ model: 'gemma-4-26b-a4b-it', contents: voicePrompt })
     ]);
 
     const textSummary = textResult.text;
