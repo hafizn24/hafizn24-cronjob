@@ -11,7 +11,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 const TELEGRAM_API_BASE  = process.env.TELEGRAM_API_BASE_URL || 'https://api.telegram.org';
 
-const ZALORA_URL    = 'https://www.zalora.com.my/p/habib-habib-1g-999-9-gold-bar-songket-collection-manufactured-by-lbma-goods-delivery-refiner-gold-4547012';
+const SHOPEE_URL = 'https://shopee.com.my/product/165219042/49302992644?d_id=2f6f6&uls_trackid=55vv4lf200lr';
 const TARGET_PRICE  = 600.00;
 const PRODUCT_NAME  = 'HABIB 1g 999.9 Gold Bar';
 
@@ -64,9 +64,9 @@ async function getProductScreenshotBase64() {
       }
     });
 
-    console.log('🌐 Navigating to Zalora product page...');
+    console.log('🌐 Navigating to Shopee product page...');
     try {
-      await page.goto(ZALORA_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.goto(SHOPEE_URL, { waitUntil: 'domcontentloaded', timeout: 20000 });
     } catch (e) {
       console.log('⚠️ Page load timed out, proceeding with available content...');
     }
@@ -86,7 +86,7 @@ async function getProductScreenshotBase64() {
 // ─── AI Price Extraction ──────────────────────────────────────────────────────
 async function extractPriceWithAI(base64Image) {
   const prompt = `
-You are a price extractor. Look at this Zalora product page screenshot and reply with ONLY the following block, nothing else, no explanation:
+You are a price extractor. Look at this Shopee product page screenshot and reply with ONLY the following block, nothing else, no explanation:
 
 PRICE: [number only, e.g. 740.00]
 ORIGINAL_PRICE: [number only if crossed out/discounted, else NONE]
@@ -126,7 +126,7 @@ async function sendTelegramAlert(price) {
   const belowTarget = price <= TARGET_PRICE;
 
   let message =
-    `${belowTarget ? '🚨' : '📊'} <b>Zalora Price Alert</b>\n` +
+    `${belowTarget ? '🚨' : '📊'} <b>Shopee Price Alert</b>\n` +
     `📦 ${PRODUCT_NAME}\n` +
     `🕐 ${timestamp} MYT\n\n` +
     `💰 Current Price: <b>RM ${price.toFixed(2)}</b>\n` +
@@ -136,7 +136,7 @@ async function sendTelegramAlert(price) {
     message += `\n✅ <b>Price is at or below your target! Buy Now!</b>\n`;
   }
 
-  message += `\n🔗 <a href="${ZALORA_URL}">View Product</a>`;
+  message += `\n🔗 <a href="${SHOPEE_URL}">View Product</a>`;
 
   const url = `${TELEGRAM_API_BASE}/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   const response = await fetch(url, {
@@ -163,7 +163,7 @@ async function sendTelegramAlert(price) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function run() {
   initLog();
-  log('START', 'Zalora Price Tracker Started');
+  log('START', 'Shopee Price Tracker Started');
   console.log('🎯 Run started at', new Date().toISOString());
 
   try {
