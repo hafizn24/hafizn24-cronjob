@@ -7,8 +7,26 @@ const { XMLParser } = require('fast-xml-parser');
 const { GoogleGenAI } = require('@google/genai');
 const gTTS = require('gtts');
 
+// ─── Configuration Constants ─────────────────────────────────────────────────────────────────
+const LOG_FILE_PATH = path.join(__dirname, 'run-log.txt');
+const AUDIO_FILE_PATH = path.join(__dirname, 'news-bulletin.mp3');
+const PRIOR_ARTICLES_KEY = 'prior_articles';
+
+const RSS_URLS = [
+  'https://news.google.com/rss/headlines/section/topic/WORLD?hl=en&gl=US&ceid=US:en',
+  'https://news.google.com/rss/search?q=Malaysia&hl=en-MY&gl=MY&ceid=MY:en',
+  'https://news.google.com/rss/search?q=football+OR+soccer+OR+FIFA&hl=en&gl=US&ceid=US:en',
+  'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en&gl=US&ceid=US:en'
+];
+
+const MAX_ARTICLES_PER_FEED = 3;
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 2000;
+
+// ────────────────────────────────────────────────────────────────────────────
+
 // ─── Logger ───────────────────────────────────────────────────────────────────
-const logFilePath = path.join(__dirname, 'run-log.txt');
+const logFilePath = LOG_FILE_PATH;
 
 function initLog() {
   fs.writeFileSync(logFilePath, `===== RUN STARTED: ${new Date().toISOString()} =====\n\n`);
@@ -85,9 +103,12 @@ function parseRSS(xmlData) {
     return {
       title:       item.title       || 'N/A',
       url:         item.link        || 'N/A',
-      description: 'N/A',
+      description: item.description || 'N/A',
+      content:     item.content     || '',
+      author:      item.creator     || 'Unknown',
       source:      source           || 'Google News',
-      publishedAt: item.pubDate     || 'N/A'
+      publishedAt: item.pubDate     || 'N/A',
+      image:       item['media:content']?.url || ''
     };
   });
 }
@@ -98,8 +119,11 @@ function parseGNews(response) {
     title:       article.title       || 'N/A',
     url:         article.url         || 'N/A',
     description: article.description || 'N/A',
+    content:     article.content     || '',
+    author:      article.author      || 'Unknown',
     source:      article.source?.name || 'GNews',
-    publishedAt: article.publishedAt || 'N/A'
+    publishedAt: article.publishedAt || 'N/A',
+    image:       article.image       || ''
   }));
 }
 
@@ -194,7 +218,7 @@ function getMYTDateTime() {
   }).replace(',', ' ·') + ' MYT';
 }
 
-async function fetchWithRetry(options, retries = 3, delay = 2000) {
+async function fetchWithRetry(options, retries = RETRY_ATTEMPTS, delay = RETRY_DELAY_MS) {
   for (let i = 0; i < retries; i++) {
     try {
       const result = await httpGetWithOptions(options);
@@ -207,26 +231,36 @@ async function fetchWithRetry(options, retries = 3, delay = 2000) {
   return { articles: [] };
 }
 
+function dedupeArticles(articles, previousArticles = []) {
+  const existingTitles = new Set(previousArticles.map(a => a.title?.toLowerCase?.() || ''));
+  return articles.filter(a => {
+    const title = a.title?.toLowerCase?.() || '';
+    return !existingTitles.has(title);
+  });
+}
+
 async function run() {
+  const logEntries = [];
+
   try {
     initLog();
+    log('RUN STARTED', { timestamp: new Date().toISOString(), version: '2.0.0-enhanced' });
 
     // ── STEP 1: Fetch RSS feeds ───────────────────────────────────────────────
-    const RSS_URLS = [
-      'https://news.google.com/rss/headlines/section/topic/WORLD?hl=en&gl=US&ceid=US:en',
-      'https://news.google.com/rss/search?q=Malaysia&hl=en-MY&gl=MY&ceid=MY:en',
-      'https://news.google.com/rss/search?q=football+OR+soccer+OR+FIFA&hl=en&gl=US&ceid=US:en',
-      'https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en&gl=US&ceid=US:en'
-    ];
-
     console.log('Fetching Google News RSS feeds...');
-    const rawFeeds = await Promise.all(RSS_URLS.map(url => httpGet(url)));
 
-    log('STEP 1 — RAW RSS (first 2000 chars of each feed)', {
-      WORLD:    rawFeeds[0].slice(0, 2000),
-      MALAYSIA: rawFeeds[1].slice(0, 2000),
-      FOOTBALL: rawFeeds[2].slice(0, 2000),
-      ECONOMIC: rawFeeds[3].slice(0, 2000)
+    if (RSS_URLS.length === 0) {
+      throw new Error('No RSS URLs configured');
+    }
+
+    const rawFeeds = await Promise.all(RSS_URLS.map(url => httpGet(url)));
+    logEntries.push({ step: 'STEP 1', rawFeeds: rawFeeds.length });
+
+    log('STEP 1 — RAW RSS (first 1000 chars of each feed)', {
+      WORLD:    rawFeeds[0]?.slice(0, 1000) || 'N/A',
+      MALAYSIA: rawFeeds[1]?.slice(0, 1000) || 'N/A',
+      FOOTBALL: rawFeeds[2]?.slice(0, 1000) || 'N/A',
+      ECONOMIC: rawFeeds[3]?.slice(0, 1000) || 'N/A'
     });
 
     // ── STEP 2: Parse RSS ─────────────────────────────────────────────────────
@@ -243,9 +277,11 @@ async function run() {
       section:  s.label,
       articles: s.articles.map(a => ({
         title:       a.title,
+        author:      a.author,
         source:      a.source,
         publishedAt: a.publishedAt,
-        url:         a.url
+        url:         a.url,
+        image:       a.image || ''
       }))
     })));
 
@@ -300,7 +336,29 @@ async function run() {
       log('STEP 2b — GNEWS FALLBACK', gNewsResults);
     }
 
-    // ── STEP 3: Build newsText ────────────────────────────────────────────────
+    // ── STEP 2c: Deduplicate articles ──────────────────────────────────────────
+    let allPreviousArticles = [];
+    sections.forEach(section => {
+      allPreviousArticles = allPreviousArticles.concat(section.articles);
+    });
+
+    sections.forEach(section => {
+      const dedupedArticles = dedupeArticles(section.articles, allPreviousArticles);
+      section.articles = dedupedArticles;
+      allPreviousArticles = allPreviousArticles.concat(dedupedArticles);
+    });
+    log('STEP 2c — DEDUPLICATED ARTICLES', sections.map(s => ({
+      section: s.label,
+      articles: s.articles.map(a => ({
+        title:       a.title,
+        author:      a.author,
+        source:      a.source,
+        url:         a.url,
+        image:       a.image || ''
+      }))
+    })));
+
+    // ── STEP 3: Build newsText with enhanced metadata ─────────────────────────
     let newsText = '';
     sections.forEach(section => {
       newsText += `\n[${section.label}]\n`;
@@ -310,8 +368,10 @@ async function run() {
         section.articles.slice(0, 3).forEach((article, i) => {
           newsText += `${i + 1}. Title: ${article.title}\n`;
           newsText += `   Description: ${article.description || 'N/A'}\n`;
+          newsText += `   Author: ${article.author || 'Unknown'}\n`;
           newsText += `   Source: ${article.source}\n`;
           newsText += `   URL: ${article.url}\n`;
+          newsText += `   Image: ${article.image || 'N/A'}\n`;
           newsText += `   Published: ${article.publishedAt}\n\n`;
         });
       }
@@ -337,15 +397,19 @@ STRICT RULES:
 - Include up to 3 articles per section. For any section with no articles, write "No articles available for this section." Do NOT invent, fabricate, or assume any news.
 - For each article: write a bold headline, then 1-2 sentences of plain description, then the source as a clickable link.
 - Use the exact article URL provided for the source link.
+- Mark breaking news articles with [BREAKING] before the headline.
+- Include the author name when available in the source link.
 
 FORMAT TO FOLLOW EXACTLY (use \\n for line breaks):
 <b>📰 Daily News Bulletin</b>
-<i>🕗 ${sentAt}</i>
+<i>🕗 ${sentAt} MYT</i>
 
-——————————————
+— — — — — — — — — — — — —
 <b>🌍 GLOBAL</b>
-——————————————
+— — — — — — — — — — — — —
 
+<b>BREAKING:</b>
+[if any breaking news articles]
 <b>1. [Article 1 headline]</b>
 [1-2 sentence description in plain text]
 <a href="[article 1 URL]">📎 [Source Name]</a>
@@ -358,44 +422,46 @@ FORMAT TO FOLLOW EXACTLY (use \\n for line breaks):
 [1-2 sentence description in plain text]
 <a href="[article 3 URL]">📎 [Source Name]</a>
 
-——————————————
+— — — — — — — — — — — — —
 <b>🇲🇾 MALAYSIA</b>
-——————————————
+— — — — — — — — — — — — —
 
-[same structure for 3 Malaysia articles]
+[binary for Malaysia articles]
 
-——————————————
+— — — — — — — — — — — — —
 <b>⚽ FOOTBALL</b>
-——————————————
+— — — — — — — — — — — — —
 
-[same structure for 3 Football articles]
+[binary for Football articles]
 
-——————————————
+— — — — — — — — — — — — —
 <b>📈 ECONOMIC</b>
-——————————————
+— — — — — — — — — — — — —
 
-[same structure for 3 Economic articles]
+[binary for Economic articles]
 
-——————————————
-<i>🎙 Full audio bulletin attached above · — Your Daily News Bot 🤖</i>
+— — — — — — — — — — — — —
+<i>🎙 Audio bulletin attached above · Stay informed daily</i>
 
-News articles to use:
+News articles with metadata to use:
 ${newsText}`;
 
-    const voicePrompt = `You are a professional radio news reporter. Based on the following news articles, write a spoken English news bulletin (plain text only, no symbols, no HTML, no markdown, no asterisks). Target length: 8-10 minutes when read aloud at a natural pace (roughly 1200-1500 words).
+    const voicePrompt = `You are a professional radio news reporter. Based on the following news articles, write a spoken English news bulletin (plain text only, no symbols, no HTML, no markdown, no asterisks). Target length: 5-8 minutes when read aloud at a natural pace (approximately 800-1000 words).
 
 Open with: "Good day, and welcome to your Daily News Bulletin. I am your news reporter, bringing you the latest headlines from around the world."
 
-Cover ALL 12 articles across all 4 sections. Use these transitions:
-- After global: "Moving on to news from Malaysia..."
-- After Malaysia: "Now turning to the world of football..."
-- After football: "And on the economic front..."
+Use these transitions naturally:
+- After global section: "Now, moving on to news from Malaysia..."
+- After Malaysia section: "We now turn to the world of football..."
+- After football section: "Finally, let's take a look at the economic front..."
 
-For each article spend 2-4 sentences: state what happened, why it matters, and any key detail.
+For each article, spend 2-3 sentences: state what happened, why it matters, and any key detail. Use a natural, conversational tone.
 
-If a section has no articles, state "No articles available for this section." Do NOT invent, fabricate, or assume any news.
+If a section has no articles, state: "No articles available for this section at this time."
 
-Close with: "That is all for today's bulletin. Stay informed, stay ahead. Until next time."
+Be concise and engaging. Avoid repetition.
+
+Close with: "That wraps up today's bulletin. Stay informed, stay ahead. Until next time."
 
 News articles:
 ${newsText}`;
