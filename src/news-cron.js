@@ -336,16 +336,15 @@ async function run() {
       log('STEP 2b — GNEWS FALLBACK', gNewsResults);
     }
 
-    // ── STEP 2c: Deduplicate articles ──────────────────────────────────────────
-    let allPreviousArticles = [];
+    // ── STEP 2c: Deduplicate articles across sections ──────────────────────────
+    const seenTitles = new Set();
     sections.forEach(section => {
-      allPreviousArticles = allPreviousArticles.concat(section.articles);
-    });
-
-    sections.forEach(section => {
-      const dedupedArticles = dedupeArticles(section.articles, allPreviousArticles);
-      section.articles = dedupedArticles;
-      allPreviousArticles = allPreviousArticles.concat(dedupedArticles);
+      section.articles = section.articles.filter(a => {
+        const title = a.title?.toLowerCase?.() || '';
+        if (seenTitles.has(title)) return false;
+        seenTitles.add(title);
+        return true;
+      });
     });
     log('STEP 2c — DEDUPLICATED ARTICLES', sections.map(s => ({
       section: s.label,
